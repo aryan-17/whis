@@ -1,0 +1,52 @@
+linters:
+  enable:
+    - errcheck       # all errors must be checked — never _ = err
+    - govet          # go vet rules (shadowing, printf format, etc.)
+    - staticcheck    # advanced static analysis (SA, ST, S rules)
+    - unused         # unused code (functions, types, variables)
+    - gofmt          # formatting must match gofmt output
+    - goimports      # imports must be grouped and sorted
+    - revive         # idiomatic Go (replaces golint)
+    - godot          # comments must end with a period
+    - misspell       # common English spelling errors in comments/strings
+    - gosimple       # simplify code (use strings.Contains not regexp, etc.)
+    - ineffassign    # assignments whose values are never used
+    - typecheck      # Go type-checker (must pass before other linters)
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true   # flag unchecked type assertions
+    check-blank: true             # flag _ = someFunc()
+
+  govet:
+    enable-all: true
+
+  revive:
+    rules:
+      - name: exported              # all exported types/funcs must have doc comment
+      - name: error-return          # error must be last return value
+      - name: error-naming          # error vars must be named errXxx or ErrXxx
+      - name: var-naming            # follow Go naming conventions
+      - name: receiver-naming       # consistent receiver names within a type
+      - name: unused-parameter      # flag unused function parameters
+
+  godot:
+    scope: declarations            # only check declaration comments
+
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    # Test files: allow unexported test helpers, unused params in benchmarks
+    - path: _test\.go
+      linters:
+        - revive
+        - unused
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 3m
+  modules-download-mode: readonly
