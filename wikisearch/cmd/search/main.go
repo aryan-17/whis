@@ -1,19 +1,23 @@
 // Command search — interactive ranked search REPL.
-// Sprint 6: phrase queries, structured query parsing, snippets.
+// Sprint 7: BM25 + PageRank score blending, phrase queries, snippets.
 package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"wikisearch/internal/analysis"
 	"wikisearch/internal/corpus"
 	"wikisearch/internal/index"
+	"wikisearch/internal/link"
 	"wikisearch/internal/postings"
 	"wikisearch/internal/query"
 	"wikisearch/internal/rank"
@@ -21,6 +25,8 @@ import (
 
 func main() {
 	dump := flag.String("dump", "", "path to dump (.json.gz or .json.bz2)")
+	idxDir := flag.String("index", "", "pre-built segment directory (optional)")
+	prWeight := flag.Float64("pr-weight", 1.0, "PageRank blend weight")
 	flag.Parse()
 	if *dump == "" {
 		log.Fatal("-dump required")
@@ -35,6 +41,9 @@ func main() {
 
 	a := analysis.NewAnalyzer()
 	idx := index.NewMemoryIndex()
+	var allLinks [][]string
+	titleToID := make(map[string]uint32)
+
 	for {
 		doc, ok, err := r.Next()
 		if err != nil {
@@ -44,9 +53,27 @@ func main() {
 			break
 		}
 		idx.Add(doc, a)
+		titleToID[doc.Title] = doc.ID
+		allLinks = append(allLinks, doc.Links)
 	}
 	idx.Finalize()
 	fmt.Printf(" done (%d docs)\n", idx.NumDocs())
+
+	// Load or compute PageRank.
+	var prScores []float64
+	prPath := filepath.Join(*idxDir, "pagerank.json")
+	if *idxDir != "" {
+		if data, err := os.ReadFile(prPath); err == nil {
+			json.Unmarshal(data, &prScores)
+			fmt.Println("loaded PageRank from disk")
+		}
+	}
+	if len(prScores) == 0 {
+		fmt.Print("computing PageRank...")
+		graph := link.BuildGraph(int(idx.NumDocs()), allLinks, titleToID)
+		prScores = link.PageRank(graph, int(idx.NumDocs()), 0.85, 30)
+		fmt.Println(" done")
+	}
 
 	scorer := rank.NewBM25(idx, 1.2, 0.75)
 
@@ -62,8 +89,6 @@ func main() {
 		}
 
 		start := time.Now()
-
-		// Parse query into AST.
 		ast, err := query.Parse(input)
 		if err != nil {
 			fmt.Printf("parse error: %v\n", err)
@@ -71,7 +96,6 @@ func main() {
 			continue
 		}
 
-		// Evaluate AST to a posting list.
 		result, ok := evalNode(ast, idx, a)
 		if !ok || len(result.Entries) == 0 {
 			fmt.Printf("found 0 documents in %s\n", time.Since(start))
@@ -79,18 +103,23 @@ func main() {
 			continue
 		}
 
-		// Score with BM25.
 		queryTerms := collectTerms(ast, a)
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
-			var score float64
+			var bm25Score float64
 			for _, term := range queryTerms {
 				pl, ok := idx.Lookup(term)
 				if !ok {
 					continue
 				}
-				score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
+				bm25Score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
 			}
+			// Blend: final = bm25 + w × log(1 + pagerank)
+			pr := 0.0
+			if int(entry.DocID) < len(prScores) {
+				pr = prScores[entry.DocID]
+			}
+			score := bm25Score + *prWeight*math.Log1p(pr)
 			results = append(results, rank.Result{DocID: entry.DocID, Score: score})
 		}
 
@@ -105,15 +134,14 @@ func main() {
 	}
 }
 
-// evalNode recursively evaluates an AST node against the index.
 func evalNode(node query.Node, idx index.Index, a *analysis.Analyzer) (postings.List, bool) {
 	switch n := node.(type) {
 	case *query.TermNode:
-		terms := a.Analyze(n.Term)
-		if len(terms) == 0 {
+		tokens := a.Analyze(n.Term)
+		if len(tokens) == 0 {
 			return postings.List{}, false
 		}
-		return idx.Lookup(terms[0].Term)
+		return idx.Lookup(tokens[0].Term)
 
 	case *query.PhraseNode:
 		if len(n.Terms) == 0 {
@@ -123,7 +151,6 @@ func evalNode(node query.Node, idx index.Index, a *analysis.Analyzer) (postings.
 		for i, w := range n.Terms {
 			analyzed[i] = a.Analyze(w)
 		}
-		// Start with first term's posting list.
 		if len(analyzed[0]) == 0 {
 			return postings.List{}, false
 		}
@@ -131,7 +158,6 @@ func evalNode(node query.Node, idx index.Index, a *analysis.Analyzer) (postings.
 		if !ok {
 			return postings.List{}, false
 		}
-		// Intersect with each subsequent term using PhraseIntersect.
 		for i := 1; i < len(analyzed); i++ {
 			if len(analyzed[i]) == 0 {
 				continue
@@ -179,11 +205,9 @@ func evalNode(node query.Node, idx index.Index, a *analysis.Analyzer) (postings.
 		return result, true
 
 	case *query.NotNode:
-		// NOT alone returns nothing useful — used only as part of AND NOT.
 		return postings.List{}, false
 
 	case *query.FieldNode:
-		// For now treat field queries same as term queries (title boost in Sprint 4+).
 		return evalNode(n.Child, idx, a)
 
 	default:
@@ -191,7 +215,6 @@ func evalNode(node query.Node, idx index.Index, a *analysis.Analyzer) (postings.
 	}
 }
 
-// collectTerms extracts all leaf term strings from an AST for scoring/snippets.
 func collectTerms(node query.Node, a *analysis.Analyzer) []string {
 	var terms []string
 	switch n := node.(type) {
@@ -214,7 +237,6 @@ func collectTerms(node query.Node, a *analysis.Analyzer) []string {
 			terms = append(terms, collectTerms(c, a)...)
 		}
 	case *query.NotNode:
-		// Don't score/highlight NOT terms.
 	case *query.FieldNode:
 		terms = append(terms, collectTerms(n.Child, a)...)
 	}
