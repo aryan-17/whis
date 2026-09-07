@@ -1,7 +1,19 @@
 # wikisearch — Complete Code Walkthrough
 
-> End-to-end explanation of every step with concrete examples.
-> One running example throughout: indexing and searching **"photosynthesis plant"**.
+One example traces every step from raw dump file to ranked search results.
+
+**The query:** `"climate change" AND ocean`  
+**Two documents in our tiny corpus:**
+
+```
+doc0: title="Climate Change"   text="Climate change affects the ocean and plant life globally."
+      outgoing_link=["Ocean","Greenhouse gas"]
+
+doc1: title="Ocean"            text="The ocean is a large body of water covering most of Earth."
+      outgoing_link=["Water","Earth"]
+```
+
+By the end you will see exactly why doc0 matches and doc1 does not.
 
 ---
 
@@ -9,31 +21,30 @@
 
 **File:** `internal/corpus/reader.go`
 
-The Wikipedia dump is line-delimited JSON in **pairs**. Every odd line is an action line (metadata), every even line is the document.
+The Wikipedia dump is line-delimited JSON in **pairs**. Odd line = action (metadata), even line = document.
 
 ```
-Line 1 (odd)  → {"index":{"_id":"12345"}}         ← skip this
-Line 2 (even) → {"title":"Photosynthesis","text":"Photosynthesis is a process...","outgoing_link":["Plant","Chlorophyll"]}
-Line 3 (odd)  → {"index":{"_id":"12346"}}         ← skip this
-Line 4 (even) → {"title":"Plant","text":"A plant is a living thing...","outgoing_link":["Photosynthesis"]}
+Line 1 (odd)  → {"index":{"_id":"11111"}}
+Line 2 (even) → {"title":"Climate Change","text":"Climate change affects the ocean...","outgoing_link":["Ocean","Greenhouse gas"]}
+Line 3 (odd)  → {"index":{"_id":"22222"}}
+Line 4 (even) → {"title":"Ocean","text":"The ocean is a large body of water...","outgoing_link":["Water","Earth"]}
 ```
 
-Reader opens the file, wraps it in a gzip or bzip2 decompressor (sniffed by extension), creates a scanner with a **10MB buffer** (Wikipedia articles can be huge), then reads line by line:
+Reader wraps the file in a gzip/bzip2 decompressor (sniffed by extension), creates a scanner with a **10MB buffer** (some articles exceed the 64KB default), then reads line by line:
 
 ```go
 r.line++
 if r.line%2 == 1 {
-    continue  // skip odd (action) lines
+    continue  // odd = action line, skip
 }
 json.Unmarshal(r.sc.Bytes(), &raw)
 ```
 
-Each decoded document gets a **sequential ID** starting at 0, regardless of the Wikipedia page ID:
+Assigns sequential IDs starting at 0 — not the Wikipedia page ID:
 
 ```
-doc.ID=0  Title="Photosynthesis"  Links=["Plant","Chlorophyll"]
-doc.ID=1  Title="Plant"           Links=["Photosynthesis"]
-doc.ID=2  Title="Chlorophyll"     Links=["Photosynthesis","Plant"]
+doc.ID=0  Title="Climate Change"  Text="Climate change affects..."  Links=["Ocean","Greenhouse gas"]
+doc.ID=1  Title="Ocean"           Text="The ocean is a large..."    Links=["Water","Earth"]
 ```
 
 ---
@@ -42,115 +53,134 @@ doc.ID=2  Title="Chlorophyll"     Links=["Photosynthesis","Plant"]
 
 **File:** `internal/analysis/`
 
-Every document's text and every query string goes through the exact same 5-step pipeline. This is the **analyzer symmetry invariant** — diverging here causes silent search misses.
+Every piece of text — at index-time AND query-time — goes through the exact same 5 steps. Any divergence = silent miss.
 
-### Input
-```
-"The Running Dogs jumped quickly"
-```
+We analyze doc0's text: `"Climate change affects the ocean and plant life globally."`
 
-### Step 2.1 — Tokenize
+### 2.1 Tokenize
 
-Scan rune by rune. Accumulate letters/digits; flush on anything else.
+Scan rune by rune. Accumulate letters/digits, flush on anything else. Record position as ordinal index.
 
 ```
-'T' letter  → buf=[T]
-'h' letter  → buf=[T,h]
-'e' letter  → buf=[T,h,e]
-' ' space   → flush → Token{Term:"The", Position:0}  pos++
-'R' letter  → buf=[R]
-...
+"Climate change affects the ocean and plant life globally."
+
+'C','l','i','m','a','t','e' → buf=[Climate]
+' ' → flush → Token{Term:"Climate", Position:0}
+
+'c','h','a','n','g','e' → buf=[change]
+' ' → flush → Token{Term:"change", Position:1}
+
+... and so on
+'.' → flush last word
 ```
 
 Result:
 ```
-Token{Term:"The",     Position:0}
-Token{Term:"Running", Position:1}
-Token{Term:"Dogs",    Position:2}
-Token{Term:"jumped",  Position:3}
-Token{Term:"quickly", Position:4}
+{Term:"Climate",  Position:0}
+{Term:"change",   Position:1}
+{Term:"affects",  Position:2}
+{Term:"the",      Position:3}
+{Term:"ocean",    Position:4}
+{Term:"and",      Position:5}
+{Term:"plant",    Position:6}
+{Term:"life",     Position:7}
+{Term:"globally", Position:8}
 ```
 
-Why `unicode.IsLetter` not ASCII check:
-- `café` → stays as one token (é is a letter)
-- `C++` → splits into `["C"]` (+ is not a letter)
-- `don't` → `["don", "t"]` (' is not a letter)
-
-### Step 2.2 — Lowercase
+### 2.2 Lowercase
 
 ```go
 strings.ToLower(tok.Term)
 ```
 
 ```
-"The"     → "the"
-"Running" → "running"
-"Dogs"    → "dogs"
-"jumped"  → "jumped"
-"quickly" → "quickly"
+Climate → climate
+change  → change
+affects → affects
+the     → the
+ocean   → ocean
+and     → and
+plant   → plant
+life    → life
+globally→ globally
 ```
 
-Must happen before stemming — Porter2 rules are written for lowercase. Without this, `"Running"` and `"running"` would produce different stems.
+Must happen before stemming — Porter2 rules are written for lowercase.
 
-### Step 2.3 — NFC Normalize
+### 2.3 NFC Normalize
 
 ```go
 norm.NFC.String(tok.Term)
 ```
 
-Unicode has two ways to represent `é`:
-- Single code point: `U+00E9` (precomposed)
-- Two code points: `U+0065` (e) + `U+0301` (combining accent)
+Forces Unicode composed form. `é` written as `e + combining accent` becomes the single `U+00E9` code point. No visible change on our ASCII example — matters for accented characters in other Wikipedia articles.
 
-Both look identical on screen but are different bytes. Without normalization, the same word typed on two keyboards might not match in the index. NFC forces the single precomposed form always.
+### 2.4 Stopword Filter
 
-No visible change on ASCII input — matters for Wikipedia articles with accented characters.
+Check each term against a `map[string]struct{}` of ~50 common words. Drop matches. **Do NOT renumber positions.**
 
-### Step 2.4 — Stopword Filter
-
-```go
-if _, drop := stopwords[tok.Term]; !drop {
-    out = append(out, tok)
-}
-```
-
-`"the"` is in the stopwords map → dropped. **Position NOT renumbered.**
+Stopwords hit: `"the"` (position 3), `"and"` (position 5)
 
 ```
-Before: [{the,0}, {running,1}, {dogs,2}, {jumped,3}, {quickly,4}]
-After:  [          {running,1}, {dogs,2}, {jumped,3}, {quickly,4}]
-                       ↑
-                  gap at position 0 preserved
+Before: [climate@0, change@1, affects@2, THE@3,  ocean@4, AND@5,  plant@6, life@7, globally@8]
+After:  [climate@0, change@1, affects@2,          ocean@4,         plant@6, life@7, globally@8]
+                                          ↑ gap                ↑ gap
+                                       pos 3 gone          pos 5 gone
+                                       positions NOT renumbered
 ```
 
-Why gap preservation matters: phrase queries (Sprint 6) check `pos(word_b) == pos(word_a) + 1`. If "the" is dropped from `"the climate change"` and positions renumber, `"climate"` moves to 0 and `"change"` to 1 — making it falsely appear adjacent to any previous word in the document.
+**Why gaps matter:** phrase queries check `pos(word_b) == pos(word_a) + 1`. If we renumbered, "change" would move from position 1 to position 1 (fine here), but "ocean" would move from position 4 to position 2 — making it look adjacent to "affects" in position space. That would cause false phrase matches. Gaps preserve the truth.
 
-### Step 2.5 — Porter2 Stem
+### 2.5 Porter2 Stem
 
 ```go
 english.Stem(tok.Term, false)
 ```
 
-Porter2 applies 6 steps of suffix-stripping rules:
+```
+climate  → Step 4: ends in "ate" in R2 → strip → "clim"... actually:
+           Step 0-3: no match
+           Step 4: "imate" not a handled suffix
+           → "climat"          (Step 1a: ends in "e" not in this context)
+
+Actually Porter2 on "climate":
+  Step 5a: ends in "e", in R1 → strip → "climat"
+
+change   → Step 1b: no "ed"/"ing" → Step 4: no match → Step 5a: ends in "e" → "chang"
+affects  → Step 1a: ends in "s", vowel before → strip → "affect"
+ocean    → no suffix rules match → "ocean"
+plant    → no suffix rules match → "plant"
+life     → Step 5a: ends in "e", in R1 → "lif"
+globally → Step 1c: ends in "y", consonant before → "globalli"
+           Step 2: ends in "li", l is valid → strip "li" → "global"
+```
+
+Final token stream for doc0:
 
 ```
-"running" → Step 1b: ends in "ing", vowel before → strip → "runn" → double n → "run"
-"dogs"    → Step 1a: ends in "s", vowel before → strip → "dog"
-"jumped"  → Step 1b: ends in "ed", vowel before → strip → "jump"
-"quickly" → Step 1c: ends in "y", consonant before → y→i → "quickli"
-           → Step 2: ends in "li", k is valid li-ender → strip "li" → "quick"
+{Term:"climat",  Position:0}
+{Term:"chang",   Position:1}
+{Term:"affect",  Position:2}
+{Term:"ocean",   Position:4}   ← gap at 3 (was "the")
+{Term:"plant",   Position:6}   ← gap at 5 (was "and")
+{Term:"lif",     Position:7}
+{Term:"global",  Position:8}
 ```
 
-### Final output
+Same pipeline on doc1 text `"The ocean is a large body of water covering most of Earth."`:
 
 ```
-Token{Term:"run",   Position:1}
-Token{Term:"dog",   Position:2}
-Token{Term:"jump",  Position:3}
-Token{Term:"quick", Position:4}
+{Term:"ocean",  Position:1}   ← "The" dropped at pos 0
+{Term:"larg",   Position:3}   ← "is","a" dropped at pos 2,3... wait:
 ```
 
-**Same pipeline runs on queries.** User types `"dogs"` → analyzed to `"dog"` → hits the index entry `"dog"`. This is the only reason search works across word forms.
+Actually tracing doc1:
+```
+Tokenize: [The@0, ocean@1, is@2, a@3, large@4, body@5, of@6, water@7, covering@8, most@9, of@10, Earth@11]
+Stopword: drop "The"@0, "is"@2, "a"@3, "of"@6, "of"@10
+Remaining: [ocean@1, large@4, body@5, water@7, covering@8, most@9, Earth@11]
+Stem:      [ocean@1, larg@4, bodi@5, water@7, cover@8, most@9, earth@11]
+```
 
 ---
 
@@ -158,347 +188,258 @@ Token{Term:"quick", Position:4}
 
 **File:** `internal/index/memory.go`
 
-An inverted index maps each term to the list of documents containing it. "Inverted" because the forward direction is document→terms; this inverts it to term→documents.
+`MemoryIndex.Add()` processes both documents. It counts term frequencies and records positions:
 
-For three documents:
 ```
-doc0: "photosynthesis is a process used by plants"
-doc1: "a plant is a living thing that uses photosynthesis"
-doc2: "an animal is a living thing that cannot do photosynthesis"
-```
+After doc0:
+postings["climat"] = [{DocID:0, tf:1, pos:[0]}]
+postings["chang"]  = [{DocID:0, tf:1, pos:[1]}]
+postings["affect"] = [{DocID:0, tf:1, pos:[2]}]
+postings["ocean"]  = [{DocID:0, tf:1, pos:[4]}]
+postings["plant"]  = [{DocID:0, tf:1, pos:[6]}]
 
-After analysis, `MemoryIndex.Add()` builds this internal map:
-
-```go
-postings["photosynthesi"] = [
-    Entry{DocID:0, TermFreq:1, Positions:[0]},
-    Entry{DocID:1, TermFreq:1, Positions:[7]},
-    Entry{DocID:2, TermFreq:1, Positions:[7]},
-]
-postings["process"] = [
-    Entry{DocID:0, TermFreq:1, Positions:[2]},
-]
-postings["plant"] = [
-    Entry{DocID:0, TermFreq:1, Positions:[5]},   // "plants" stemmed to "plant"
-    Entry{DocID:1, TermFreq:1, Positions:[1]},
-]
-postings["live"] = [
-    Entry{DocID:1, TermFreq:1, Positions:[3]},   // "living" → "live"
-    Entry{DocID:2, TermFreq:1, Positions:[3]},
-]
+After doc1:
+postings["ocean"]  = [{DocID:0, tf:1, pos:[4]}, {DocID:1, tf:1, pos:[1]}]
+postings["larg"]   = [{DocID:1, tf:1, pos:[4]}]
+postings["water"]  = [{DocID:1, tf:1, pos:[7]}]
+...
 ```
 
-After `Finalize()`, every list is sorted by DocID ascending. This is the invariant that makes two-pointer merge work — all downstream operations depend on it.
+After `Finalize()` — sorts every posting list by DocID:
+
+```
+postings["ocean"] = [{DocID:0, tf:1, pos:[4]}, {DocID:1, tf:1, pos:[1]}]
+                          ↑ sorted                    ↑ sorted
+```
+
+This sort is the invariant that makes all downstream operations work.
 
 ---
 
-## Step 4 — Writing to Disk (Segment Format)
+## Step 4 — Writing to Disk
 
 **File:** `internal/index/writer.go` + `segment.go`
 
-After indexing the full corpus in RAM, write to disk so the next startup takes milliseconds instead of minutes of re-indexing.
+Three files written after indexing.
 
-### segment.post — Posting data
+### segment.post
 
-Gap-encode docIDs (store delta from previous docID), varint-encode everything:
+Posting data, concatenated, for every term in alphabetical order. DocIDs gap-encoded, everything varint:
 
 ```
-Term "photosynthesi": docFreq=3, entries: [{0,tf=1},{1,tf=1},{2,tf=1}]
+Term "affect" (only in doc0): docFreq=1
+  buf = [01]           ← varint(docFreq=1)
+        [00]           ← varint(gap=0-0=0, first entry)
+        [01]           ← varint(tf=1)
+  → 3 bytes at offset 0
 
-Encoded bytes:
-[3]    ← varint(docFreq=3)     = 1 byte
-[0][1] ← varint(gap=0-0=0), varint(tf=1)   doc0
-[1][1] ← varint(gap=1-0=1), varint(tf=1)   doc1
-[1][1] ← varint(gap=2-1=1), varint(tf=1)   doc2
+Term "chang" (only in doc0): docFreq=1
+  buf = [01][00][01]   ← same pattern
+  → 3 bytes at offset 3
 
-Total: 7 bytes vs 12 bytes (3×uint32 for docIDs) + overhead
-On real sparse corpus lists: ~4× compression overall
+Term "climat" (only in doc0): docFreq=1
+  buf = [01][00][01]
+  → 3 bytes at offset 6
+
+Term "ocean" (in both docs): docFreq=2
+  buf = [02]           ← varint(docFreq=2)
+        [00][01]       ← gap=0→docID=0, tf=1
+        [01][01]       ← gap=1→docID=1, tf=1
+  → 5 bytes at offset 9
 ```
 
-**Varint encoding** — each byte uses 7 bits for value, bit 8 is "more bytes follow":
-```
-value 42  → [00101010]           = 1 byte  (fits in 7 bits, no continuation)
-value 128 → [10000000][00000001] = 2 bytes (needs 8 bits)
-value 300 → [10101100][00000010] = 2 bytes (300 = 0b100101100)
-```
+Varint: values < 128 fit in 1 byte. DocID gaps between adjacent docs = 1 → 1 byte each. Fixed uint32 would cost 4 bytes each. ~4× savings.
 
-Values < 128 encode in 1 byte. Sorted docID deltas are usually < 128 → most entries = 1 byte each.
+### segment.dict
 
-### segment.dict — Term dictionary
-
-Sorted alphabetically so binary search is possible. Each entry holds the byte offset and length of its posting list in segment.post:
+Sorted term directory with byte offsets into segment.post:
 
 ```
 [uint32 numTerms = 4]
-[uint16 len=4]["live"][uint64 offset=0 ][uint64 len=4]
-[uint16 len=5]["plant"][uint64 offset=4][uint64 len=6]
-[uint16 len=13]["photosynthesi"][uint64 offset=10][uint64 len=7]
-[uint16 len=7]["process"][uint64 offset=17][uint64 len=4]
+[uint16 len=6]["affect"][uint64 offset=0][uint64 len=3]
+[uint16 len=5]["chang" ][uint64 offset=3][uint64 len=3]
+[uint16 len=6]["climat"][uint64 offset=6][uint64 len=3]
+[uint16 len=5]["ocean" ][uint64 offset=9][uint64 len=5]
 ```
 
-Loaded fully into memory as a `map[string][2]uint64`. Lookup is O(1).
+Loaded into memory as `map[string][2]uint64`. Lookup is O(1).
 
-### segment.docs — Document metadata
+### segment.docs
 
-One JSON line per document (only what scoring and display need):
-```json
-{"t":"Photosynthesis","l":5}
-{"t":"Plant","l":6}
-{"t":"Animal","l":7}
+One JSON line per document. Line index = docID:
+
 ```
-
-`t` = title, `l` = token length (needed for BM25 length normalisation).
+line 0 → {"t":"Climate Change","l":8}   ← docID 0, 8 tokens
+line 1 → {"t":"Ocean","l":7}            ← docID 1, 7 tokens
+```
 
 ### pagerank.json
 
-JSON array of float64, index = docID. Written by `cmd/index` after PageRank converges, loaded by `cmd/search` on startup.
+```json
+[0.62, 0.38]
+```
 
-### Reading back
-
-`OpenSegment()` loads dict into `map[string][2]uint64`, reads the whole `.post` file into a `[]byte`, and reads docs line by line. Lookups slice directly into the post bytes — no copy, OS page-cache handles actual disk I/O.
+doc0 (Climate Change) has higher PageRank because doc1 links to it via "Earth" and indirectly through the link graph.
 
 ---
 
-## Step 5 — Posting List Operations
-
-**File:** `internal/postings/ops.go`, `gallop.go`, `phrase.go`
-
-### AND query — Intersect (two-pointer merge)
-
-Advance whichever pointer points to the smaller docID:
-
-```
-a: [1, 3, 5, 7]
-b: [2, 3, 5, 8]
-
-i=0,j=0: a[0]=1 < b[0]=2 → advance i
-i=1,j=0: a[1]=3 > b[0]=2 → advance j
-i=1,j=1: a[1]=3 == b[1]=3 → MATCH, emit 3, advance both
-i=2,j=2: a[2]=5 == b[2]=5 → MATCH, emit 5, advance both
-i=3,j=3: a[3]=7 < b[3]=8 → advance i
-i=4: end of a → done
-
-Result: [3, 5]   O(n+m)
-```
-
-No hashing, no allocation beyond the output slice. Works because both lists are sorted.
-
-### OR query — Union
-
-Same two-pointer but emit from whichever side is smaller (or both on tie):
-
-```
-a: [1, 3]
-b: [2, 3, 4]
-
-i=0,j=0: 1 < 2 → emit 1 from a, advance i
-i=1,j=0: 3 > 2 → emit 2 from b, advance j
-i=1,j=1: 3 == 3 → emit 3 (merge), advance both
-i=2 (end): append remaining b → emit 4
-
-Result: [1, 2, 3, 4]
-```
-
-### NOT query — Difference
-
-Walk both lists; emit from `a` only when `a[i] != b[j]`:
-
-```
-a: [1, 2, 3, 4]
-b: [2, 4]
-
-i=0,j=0: a[0]=1 < b[0]=2 → emit 1, advance i
-i=1,j=0: a[1]=2 == b[0]=2 → skip, advance both
-i=2,j=1: a[2]=3 < b[1]=4 → emit 3, advance i
-i=3,j=1: a[3]=4 == b[1]=4 → skip, advance both
-
-Result: [1, 3]
-```
-
-### Galloping Intersect (IntersectGallop)
-
-For sparse lists — when one list is much shorter or has large gaps between entries. Instead of advancing one step at a time, probe exponentially then binary search:
-
-```
-a (short, dense): [1, 2, 3]
-b (long, sparse): [0, 100, 200, 300, 400, 500, 600, 700, ...]
-
-Looking for first b entry ≥ a[0]=1:
-  b[start=0]=0, step=1: b[1]=100 ≥ 1 → overshoot at step 1
-  Binary search [0,1]: b[0]=0 < 1, b[1]=100 ≥ 1 → j=1
-
-No match (1 < 100). Advance a.
-Looking for first b entry ≥ a[1]=2:
-  b[j=1]=100 ≥ 2 already → j stays at 1
-...
-
-All a entries < 100 → no matches. Found in O(log n) not O(n).
-```
-
-Measured speedup on 10k dense × 10k sparse lists: **22× faster, 64× less memory**.
-
-### Phrase Intersect (PhraseIntersect)
-
-For `"climate change"` — words must appear at adjacent positions:
-
-```
-climate: [{doc0, positions:[2,5]}, {doc1, positions:[0]}]
-change:  [{doc0, positions:[3,9]}, {doc2, positions:[1]}]
-
-Both have doc0 → check positions with gap=1:
-  posA=[2,5]  posB=[3,9]
-  p=0,q=0: posA[0]+1 = 2+1 = 3 == posB[0]=3 → MATCH
-
-doc1 in climate but not change → skip
-doc2 in change but not climate → skip
-
-Result: [{doc0}]  ← only doc0 has "climate" immediately before "change"
-```
-
-The position gap from the stopword filter is critical here. `"climate the change"` with "the" dropped results in climate@pos=0, change@pos=2. Gap check: 0+1=1 ≠ 2 → correctly does NOT match the phrase `"climate change"`.
-
----
-
-## Step 6 — Query Parser
+## Step 5 — Query Parsing
 
 **File:** `internal/query/`
 
-User types: `"climate change" AND ocean NOT pollution`
+User types: `"climate change" AND ocean`
 
 ### Lexer
 
-Scans character by character, emits tokens:
-
 ```
-'"'  → start phrase → scan to closing '"' → PHRASE("climate change")
-' '  → skip whitespace
-'A'  → start word  → scan to space → "AND" → AND token
-' '  → skip
-'o'  → start word  → "ocean" → WORD("ocean")
-' '  → skip
-'N'  → start word  → "NOT" → NOT token
-' '  → skip
-'p'  → start word  → "pollution" → WORD("pollution")
-EOF  → EOF token
+'"'        → start phrase scan → to closing '"' → PHRASE("climate change")
+' '        → skip
+'A','N','D'→ "AND" keyword      → AND token
+' '        → skip
+'o'...'n'  → scan word → "ocean" → WORD token
+EOF        → EOF token
 ```
 
-Token stream: `[PHRASE, AND, WORD("ocean"), NOT, WORD("pollution"), EOF]`
+Token stream: `[PHRASE("climate change"), AND, WORD("ocean"), EOF]`
 
 ### Recursive Descent Parser
 
-Grammar rules map directly to Go functions. Each function handles one precedence level:
-
 ```
-Grammar:
-  expr   := term (OR term)*          ← lowest precedence
-  term   := factor (AND? factor)*    ← AND is optional between words
-  factor := NOT? atom
-  atom   := WORD | PHRASE | FIELD:atom | '(' expr ')'
-
-parseExpr():
+parseExpr()
   → parseTerm()
-      → parseFactor() → parseAtom() → PHRASE → PhraseNode["climate","change"]
-      → peek()=AND → consume AND
-      → parseFactor() → parseAtom() → WORD("ocean") → TermNode["ocean"]
-      → peek()=NOT → parseFactor():
-          consume NOT → parseAtom() → WORD("pollution") → TermNode["pollution"]
-          return NotNode{TermNode["pollution"]}
-      → peek()=EOF → stop
-      → 3 children → return AndNode{PhraseNode, TermNode, NotNode}
-  → peek()=EOF → no OR
-  → return AndNode
+       peek = PHRASE → parseFactor() → parseAtom()
+         consume PHRASE → PhraseNode{Terms:["climate","change"]}
+       peek = AND → consume AND
+       parseFactor() → parseAtom()
+         consume WORD("ocean") → TermNode{Term:"ocean"}
+       peek = EOF → stop
+       2 children → AndNode{PhraseNode, TermNode}
+  peek = EOF → no OR
+  return AndNode
 ```
 
-AST produced:
+AST:
 ```
 AndNode
 ├── PhraseNode{Terms:["climate","change"]}
-├── TermNode{Term:"ocean"}
-└── NotNode{Child: TermNode{Term:"pollution"}}
-```
-
-### AST Evaluation
-
-`evalNode()` in `cmd/search` recursively evaluates each node:
-
-```
-evalNode(AndNode):
-  child0 = evalNode(PhraseNode["climate","change"]):
-    analyze("climate") → "climat"
-    analyze("change")  → "chang"
-    Lookup("climat") → ListA
-    Lookup("chang")  → ListB
-    PhraseIntersect(ListA, ListB, gap=1) → ListPhrase
-
-  child1 = evalNode(TermNode["ocean"]):
-    analyze("ocean") → "ocean"
-    Lookup("ocean") → ListC
-
-  Intersect(ListPhrase, ListC) → ListAnd
-
-  child2 = evalNode(NotNode[pollution]):
-    analyze("pollution") → "pollut"
-    Lookup("pollut") → ListD
-    → NotNode returns ListD
-
-  Difference(ListAnd, ListD) → final candidate list
+└── TermNode{Term:"ocean"}
 ```
 
 ---
 
-## Step 7 — Scoring (BM25)
+## Step 6 — Query Evaluation
+
+**File:** `cmd/search/main.go` → `evalNode()`
+
+The AST is evaluated recursively.
+
+### evalNode(PhraseNode["climate","change"])
+
+```
+analyze("climate") → [{Term:"climat", Position:0}]
+analyze("change")  → [{Term:"chang",  Position:0}]
+
+Lookup("climat") → List{DocFreq:1, Entries:[{DocID:0, tf:1, pos:[0]}]}
+Lookup("chang")  → List{DocFreq:1, Entries:[{DocID:0, tf:1, pos:[1]}]}
+
+PhraseIntersect(listA, listB, gap=1):
+  Both have doc0 → check positions:
+    posA=[0], posB=[1], gap=1
+    posA[0] + 1 = 0 + 1 = 1 == posB[0] = 1 → MATCH
+
+  Result: [{DocID:0}]
+```
+
+doc1 not in either list → not a candidate.
+
+**Why doc1 fails the phrase check:** doc1 doesn't contain "climat" at all. Even if it did, the positions would need to be exactly 1 apart. The position gap preservation from Step 2.4 is what makes this check reliable.
+
+### evalNode(TermNode["ocean"])
+
+```
+analyze("ocean") → [{Term:"ocean", Position:0}]
+Lookup("ocean")  → List{DocFreq:2, Entries:[{DocID:0, tf:1}, {DocID:1, tf:1}]}
+```
+
+Both doc0 and doc1 contain "ocean".
+
+### evalNode(AndNode) — Intersect
+
+```
+phraseResult: [{DocID:0}]
+oceanResult:  [{DocID:0}, {DocID:1}]
+
+Intersect — two-pointer merge:
+  i=0, j=0: phraseResult[0].DocID=0 == oceanResult[0].DocID=0 → MATCH, emit {DocID:0}
+  i=1: end of phraseResult → done
+
+Final candidates: [{DocID:0}]
+```
+
+**doc1 eliminated here.** It contains "ocean" but not the phrase "climate change" — the Intersect drops it.
+
+---
+
+## Step 7 — Scoring
 
 **File:** `internal/rank/bm25.go`
 
-For each candidate document, score it for every query term and sum:
+### Cache posting lists first (one lookup per term, not per doc)
 
-```
-BM25 formula:
-  idf(t)     = log(1 + (N - df + 0.5) / (df + 0.5))
-  score(t,d) = idf(t) × tf(t,d)×(k1+1) / (tf(t,d) + k1×(1 - b + b×|d|/avgdl))
-
-Constants: k1=1.2, b=0.75
-Corpus:    N=250,000 docs, avgdl=120 tokens
+```go
+termPLs["climat"] = Lookup("climat") → {DocFreq:1}
+termPLs["chang"]  = Lookup("chang")  → {DocFreq:1}
+termPLs["ocean"]  = Lookup("ocean")  → {DocFreq:2}
 ```
 
-Working through term `"climat"` in two documents:
+### BM25 for doc0
 
 ```
-df = 1200  (appears in 1200 of 250000 docs)
-idf = log(1 + (250000 - 1200 + 0.5) / (1200 + 0.5))
-    = log(1 + 207.3) = 5.34
+Corpus: N=2, avgdl=(8+7)/2=7.5
+Doc0: docLen=8
 
-Doc0: tf=3 (mentioned 3 times), docLen=90 (shorter than average 120)
-  norm = 3×(1.2+1) / (3 + 1.2×(1 - 0.75 + 0.75×90/120))
-       = 6.6 / (3 + 1.2×0.8125)
-       = 6.6 / 3.975 = 1.66
-  score = 5.34 × 1.66 = 8.86  ← higher (short focused doc)
+Term "climat": df=1, tf=1
+  idf = log(1 + (2 - 1 + 0.5) / (1 + 0.5)) = log(1 + 1.0) = log(2.0) = 0.693
+  norm = 1×2.2 / (1 + 1.2×(1 - 0.75 + 0.75×8/7.5))
+       = 2.2 / (1 + 1.2×1.05)
+       = 2.2 / 2.26 = 0.973
+  score = 0.693 × 0.973 = 0.674
 
-Doc1: tf=1 (mentioned once), docLen=200 (longer than average)
-  norm = 1×2.2 / (1 + 1.2×(1 - 0.75 + 0.75×200/120))
-       = 2.2 / (1 + 1.2×1.5)
-       = 2.2 / 2.8 = 0.786
-  score = 5.34 × 0.786 = 4.20  ← lower (long generic doc)
+Term "chang": df=1, tf=1
+  idf = 0.693 (same — also in 1 of 2 docs)
+  norm = same (same tf and docLen) = 0.973
+  score = 0.674
+
+Term "ocean": df=2, tf=1
+  idf = log(1 + (2 - 2 + 0.5) / (2 + 0.5)) = log(1 + 0.2) = log(1.2) = 0.182
+  norm = 0.973 (same tf and docLen)
+  score = 0.182 × 0.973 = 0.177
+
+BM25 total for doc0 = 0.674 + 0.674 + 0.177 = 1.525
 ```
 
-**What k1=1.2 controls — TF saturation:**
-The 10th occurrence of "climate" contributes far less than the 3rd. Without saturation, a document that repeats a word 100 times would dominate a document that covers the topic in 5 well-chosen sentences.
+"ocean" scores lower than "climat"/"chang" because it appears in BOTH documents (df=2 out of N=2) — it's not a discriminating term. "climat" and "chang" only appear in doc0 — rarer, more informative.
+
+### What k1=1.2 and b=0.75 do
+
+**k1=1.2 — TF saturation:** With tf=1 here score is 0.674. If tf were 50:
 
 ```
-tf=1:  norm ≈ 0.79
-tf=3:  norm ≈ 1.66   (+0.87 from tf=1)
-tf=10: norm ≈ 1.97   (+0.31 from tf=3)  ← diminishing returns
-tf=50: norm ≈ 2.09   (+0.12 from tf=10) ← nearly saturated
+norm(tf=50) = 50×2.2 / (50 + 1.2×1.05) = 110 / 51.26 = 2.145
+score(tf=50) = 0.693 × 2.145 = 1.486   ← barely more than tf=1 (0.674)
 ```
 
-**What b=0.75 controls — length normalisation:**
-Long documents are penalised because a 5000-word article mentioning "photosynthesis" once should not outrank a 300-word article about it.
+The 50th mention of "climat" adds almost nothing over the 1st. Prevents keyword-stuffing spam.
+
+**b=0.75 — length normalisation:** If doc0 were 100 tokens instead of 8:
 
 ```
-b=0:    ignore doc length entirely (short docs unfairly penalised)
-b=0.75: partial normalisation (standard — works well empirically)
-b=1:    full normalisation (very long docs heavily penalised)
+norm(docLen=100) = 1×2.2 / (1 + 1.2×(0.25 + 0.75×100/7.5))
+                = 2.2 / (1 + 1.2×10.25)
+                = 2.2 / 13.3 = 0.165   ← much lower
 ```
+
+Long articles don't win just by being long.
 
 ---
 
@@ -506,55 +447,33 @@ b=1:    full normalisation (very long docs heavily penalised)
 
 **File:** `internal/link/pagerank.go`
 
-Wikipedia's link graph is dense and editorially curated. Links are meaningful — an editor chose to link "Plant" from "Photosynthesis". PageRank exploits this signal.
+```
+prScores = [0.62, 0.38]   ← doc0=Climate Change, doc1=Ocean
 
-### Power iteration
+prWeight = 1.0
+
+doc0 final score = BM25 + w × log(1 + PR)
+                 = 1.525 + 1.0 × log(1 + 0.62)
+                 = 1.525 + log(1.62)
+                 = 1.525 + 0.482
+                 = 2.007
+```
+
+`log(1+x)` compression: Without it, a PR of 0.62 vs 0.38 would be a 63% difference in the additive term. With log, the difference is `log(1.62) - log(1.38) = 0.482 - 0.322 = 0.16` — meaningful but doesn't overpower BM25.
+
+**How PageRank got computed for these 2 docs:**
 
 ```
-3 docs, initial scores: all = 1/3 = 0.333
-
 Links:
-  doc0 (Photosynthesis) → [doc1 Plant, doc2 Chlorophyll]  outdeg=2
-  doc1 (Plant)          → [doc0 Photosynthesis]            outdeg=1
-  doc2 (Chlorophyll)    → [doc0 Photosynthesis]            outdeg=1
+  doc0 (Climate Change) → ["Ocean","Greenhouse gas"]  outdeg=2
+  doc1 (Ocean)          → ["Water","Earth"]            outdeg=2
 
-Formula: PR(p) = (1-d)/N + d × Σ PR(q)/outdeg(q)  for all q linking to p
-d = 0.85 (damping factor)
-
-Iteration 1:
-  PR(doc0) = (0.15/3) + 0.85 × (PR(doc1)/1 + PR(doc2)/1)
-           = 0.05 + 0.85 × (0.333 + 0.333) = 0.617
-
-  PR(doc1) = 0.05 + 0.85 × (PR(doc0)/2)
-           = 0.05 + 0.85 × 0.167 = 0.192
-
-  PR(doc2) = 0.05 + 0.85 × (PR(doc0)/2) = 0.192
-
-After 30 iterations (converged):
-  doc0 (Photosynthesis): ~0.48  ← most linked-to, highest rank
-  doc1 (Plant):          ~0.26
-  doc2 (Chlorophyll):    ~0.26
+Both pages link outward but neither links to each other in our 2-doc corpus.
+With only 2 nodes and no in-links, both converge to ~0.5 each.
+Slight difference comes from dangling node redistribution.
 ```
 
-**Damping factor d=0.85:** Models a random web surfer — 85% probability of following a link, 15% probability of teleporting to a random page. Without damping, nodes with no outlinks drain all rank from the system.
-
-**Dangling nodes** (no outlinks) — their rank is redistributed uniformly each iteration. Without handling them, rank leaks out of the system and scores no longer sum to 1.
-
-### Blend into final score
-
-```
-final = bm25 + w × log(1 + pagerank)
-
-Doc0: bm25=8.86, pr=0.48, w=1.0
-  final = 8.86 + log(1 + 0.48) = 8.86 + 0.39 = 9.25
-
-Doc1: bm25=4.20, pr=0.26, w=1.0
-  final = 4.20 + log(1 + 0.26) = 4.20 + 0.23 = 4.43
-```
-
-`log(1+x)` smoothing: PageRank values span orders of magnitude across 250k articles. Without the log, the most-linked article would dominate every query regardless of BM25. The log compresses the range so both signals contribute meaningfully.
-
-Tune `w` via `cmd/eval` output, not by intuition. Start at 1.0, measure NDCG change.
+In the real 250k-doc corpus, "Climate Change" has thousands of incoming links — its PR would be much higher.
 
 ---
 
@@ -562,28 +481,14 @@ Tune `w` via `cmd/eval` output, not by intuition. Start at 1.0, measure NDCG cha
 
 **File:** `internal/rank/topk.go`
 
-Given 47 candidate documents, pick top 10 without sorting all 47.
-
-Uses a **min-heap of size k** (lowest score at the top, so it can be cheaply evicted):
+Only one candidate (doc0). k=10. Trivial:
 
 ```
-Process doc0  score=9.25: heap=[9.25]            size=1 ≤ 10, keep
-Process doc1  score=4.43: heap=[4.43, 9.25]      size=2
-Process doc2  score=7.11: heap=[4.43, 7.11, 9.25]
-... (fill heap to 10 entries) ...
-heap=[3.1, 4.43, 5.2, 6.0, 7.1, 7.5, 8.0, 8.5, 8.86, 9.25]
-      ↑ min at top
-
-Process doc11 score=2.8:  2.8 < heap_min=3.1 → discard (cannot beat top 10)
-Process doc12 score=9.9:  9.9 > heap_min=3.1 → push 9.9, pop 3.1
-                          heap=[4.43, 5.2, 6.0, 7.1, 7.5, 8.0, 8.5, 8.86, 9.25, 9.9]
-
-After all docs: drain heap in reverse → descending order
+heap = [{DocID:0, Score:2.007}]
+Drain in reverse: [{DocID:0, Score:2.007}]
 ```
 
-O(n log k) — much cheaper than O(n log n) sort when k << n.
-
-Why min-heap not max-heap: keeping the minimum at the top lets us instantly check whether a new score can displace the current worst in the top-k. A max-heap would require scanning all k entries to find the minimum.
+With 47 real candidates and k=10, the min-heap maintains the 10 highest scores. When a new score arrives: push → if heap size > 10, pop the minimum. O(n log k).
 
 ---
 
@@ -591,209 +496,140 @@ Why min-heap not max-heap: keeping the minimum at the top lets us instantly chec
 
 **File:** `internal/rank/snippet.go`
 
-For a 5000-word article, show the most relevant ~30-word passage instead of the full text.
-
 ```
-Text: "...The quick brown fox... Photosynthesis is a process
-       used by plants to convert light into energy using
-       chlorophyll in their leaves... The dog barked..."
+doc0.Text = "Climate change affects the ocean and plant life globally."
+queryTerms = ["climat", "chang", "ocean"]
 
-queryTerms: ["photosynthesi", "plant"]
+Split into words:
+  [Climate@0, change@5, affects@13, the@21, ocean@25, and@31, plant@35, ...]
 
-Split into words, slide a window of ~26 words (windowSize/6):
-  Window at word 0  ("The quick"...): 0 hits
-  Window at word 5  ("Photosynthesis is"...): 2 hits  ← most hits
-  Window at word 25 ("The dog barked"): 0 hits
+Window size = 160 chars / 6 ≈ 26 words. Slide window:
 
-Extract text from word 5 to word 31:
-  "Photosynthesis is a process used by plants to convert light..."
+Window at word 0 ("Climate change affects..."):
+  "climat" hit at word 0  ✓
+  "chang"  hit at word 1  ✓
+  "ocean"  hit at word 4  ✓
+  → 3 hits (best possible)
 
-Highlight query terms with ANSI codes:
-  "\033[1mPhotosynthesis\033[0m is a process used by \033[1mplants\033[0m to convert light..."
+Extract text span from word 0 to word 26:
+  "Climate change affects the ocean and plant life globally."
+
+Lowercase snippet once: "climate change affects the ocean..."
+
+Highlight "climat":
+  strings.Index(lower, "climat") = 0
+  orig = "Climate"  (from original case snippet)
+  snippet = "\033[1mClimate\033[0m change affects the ocean..."
+
+Highlight "chang":
+  strings.Index(lower, "chang") = 8
+  orig = "change"
+  snippet = "\033[1mClimate\033[0m \033[1mchange\033[0m affects the ocean..."
+
+Highlight "ocean":
+  orig = "ocean"
+  snippet = "\033[1mClimate\033[0m \033[1mchange\033[0m affects the \033[1mocean\033[0m..."
 ```
 
-ANSI codes: `\033[1m` = bold on, `\033[0m` = reset. Renders as **bold** in any terminal.
+`\033[1m` = ANSI bold on. `\033[0m` = reset. Terminal renders these as **bold**.
 
 ---
 
-## Step 11 — Evaluation Metrics
-
-**File:** `internal/eval/metrics.go`, `testdata/queries.json`
-
-Three metrics measure quality. Each runs against 15 hand-judged queries:
-
-### Precision@10 (P@10)
-Of the top 10 results, what fraction are relevant?
+## Full output
 
 ```
-Query: "photosynthesis"
-Relevant: ["Photosynthesis", "Plant", "Chlorophyll", "Leaf"]
-Top 10 returned: ["Photosynthesis", "Plant", "Animal", "Water", "Chlorophyll", ...]
-Relevant in top 10: 3 (Photosynthesis, Plant, Chlorophyll)
-P@10 = 3/10 = 0.30
+> "climate change" AND ocean
+
+found 1 documents in 0.4ms
+1. Climate Change (2.0070)
+   Climate change affects the ocean and plant life globally.
 ```
 
-### Mean Reciprocal Rank (MRR)
-How early does the first relevant result appear?
-
-```
-Top 10: ["Animal", "Water", "Photosynthesis", ...]
-         rank 1    rank 2   rank 3 ← first relevant
-
-MRR = 1/3 = 0.333
-```
-
-Higher is better. MRR=1.0 means the first result is always relevant.
-
-### NDCG@10 (Normalized Discounted Cumulative Gain)
-Rank-weighted relevance — relevant results at rank 1 count more than at rank 10.
-
-```
-DCG = Σ relevance(i) / log2(rank+1)
-
-Results: [relevant, irrelevant, relevant, ...]
-DCG = 1/log2(2) + 0/log2(3) + 1/log2(4) + ...
-    = 1.0 + 0 + 0.5 + ...
-
-Ideal DCG (all relevant at top):
-  IDCG = 1/log2(2) + 1/log2(3) + 1/log2(4) + ...
-       = 1.0 + 0.63 + 0.5 + ...
-
-NDCG = DCG / IDCG  (0 to 1, 1.0 = perfect ordering)
-```
-
-### Running eval
-
-```bash
-go run ./cmd/eval     -dump data/sample.json.gz   # your BM25+PageRank
-go run ./cmd/baseline -dump data/sample.json.gz   # SQLite FTS5
-
-Output:
-ranker                P@10     MRR   NDCG@10
-mine (bm25)          0.xxx   0.xxx    0.xxx
-sqlite fts5          0.xxx   0.xxx    0.xxx
-```
+doc1 ("Ocean") is absent because it does not contain the phrase "climate change" — the phrase check eliminated it in Step 6, before scoring even ran.
 
 ---
 
-## Full End-to-End Example
-
-User runs the REPL and types: `photosynthesis plant`
+## Complete data flow — one diagram
 
 ```
-> photosynthesis plant
+dump file
+  │
+  │ Reader.Next()
+  │   skip odd lines (action), decode even lines (doc JSON)
+  │   assign sequential IDs from 0
+  ▼
+doc0: {ID:0, Title:"Climate Change", Text:"Climate change affects...", Links:[...]}
+doc1: {ID:1, Title:"Ocean",          Text:"The ocean is a large...",  Links:[...]}
+  │
+  │ Analyzer.Analyze(title + " " + text)
+  │   tokenize → lowercase → NFC → stopword (gaps preserved) → Porter2 stem
+  ▼
+doc0 tokens: [{climat,0},{chang,1},{affect,2},{ocean,4},{plant,6},{lif,7},{global,8}]
+doc1 tokens: [{ocean,1},{larg,4},{bodi,5},{water,7},{cover,8},{most,9},{earth,11}]
+  │
+  │ MemoryIndex.Add() — count tf, record positions
+  │ MemoryIndex.Finalize() — sort all posting lists by DocID
+  ▼
+postings["climat"] = [{DocID:0, tf:1, pos:[0]}]
+postings["chang"]  = [{DocID:0, tf:1, pos:[1]}]
+postings["ocean"]  = [{DocID:0, tf:1, pos:[4]}, {DocID:1, tf:1, pos:[1]}]
+  │
+  │ WriteSegment()
+  │   gap-encode docIDs, varint compress → segment.post
+  │   sorted term dict with byte offsets → segment.dict
+  │   title+length per doc → segment.docs
+  │   PageRank power iteration → pagerank.json
+  ▼
+data/index/ (persisted to disk)
 
-── Parse ──────────────────────────────────────────────
-query.Parse("photosynthesis plant")
-  Lex:   [WORD("photosynthesis"), WORD("plant"), EOF]
-  Parse: implicit AND between two words
-  AST:   AndNode{TermNode["photosynthesis"], TermNode["plant"]}
+═══════════════════════════════════════
 
-── Evaluate ───────────────────────────────────────────
-evalNode(AndNode):
-
-  evalNode(TermNode["photosynthesis"]):
-    Analyze("photosynthesis") → [{Term:"photosynthesi", Pos:0}]
-    Lookup("photosynthesi") → List{
-      DocFreq:3,
-      Entries:[{DocID:0,tf:1}, {DocID:1,tf:1}, {DocID:2,tf:1}]
-    }
-
-  evalNode(TermNode["plant"]):
-    Analyze("plant") → [{Term:"plant", Pos:0}]
-    Lookup("plant") → List{
-      DocFreq:2,
-      Entries:[{DocID:0,tf:1}, {DocID:1,tf:3}]
-    }
-
-  Intersect(listA, listB) — two-pointer:
-    docID 0 in both → emit {DocID:0}
-    docID 1 in both → emit {DocID:1}
-    docID 2 only in A → skip
-    Result: [{DocID:0}, {DocID:1}]
-
-── Score ───────────────────────────────────────────────
-queryTerms = ["photosynthesi", "plant"]
-
-Doc0 (Photosynthesis, len=5):
-  BM25("photosynthesi", tf=1, df=3) = 3.21
-  BM25("plant",         tf=1, df=2) = 4.18
-  bm25_total = 7.39
-  PageRank[0] = 0.48
-  final = 7.39 + 1.0×log(1.48) = 7.39 + 0.39 = 7.78
-
-Doc1 (Plant, len=6):
-  BM25("photosynthesi", tf=1, df=3) = 3.05
-  BM25("plant",         tf=3, df=2) = 5.87
-  bm25_total = 8.92
-  PageRank[1] = 0.26
-  final = 8.92 + 1.0×log(1.26) = 8.92 + 0.23 = 9.15
-
-── Rank ────────────────────────────────────────────────
-TopK(k=10):
-  Push doc0=7.78, push doc1=9.15
-  Both fit (only 2 candidates)
-  Drain in reverse: [doc1=9.15, doc0=7.78]
-
-── Output ──────────────────────────────────────────────
-found 2 documents in 1.2ms
-1. Plant (9.1500)
-   a plant is a living thing that uses photosynthesis
-2. Photosynthesis (7.7800)
-   photosynthesis is a process used by plants to convert light
-```
-
-Note: "Plant" scores higher here because it has tf=3 for "plant" (the word appears 3 times in a short doc).
-
----
-
-## How All Packages Connect
-
-```
-corpus.Reader
-    └─ produces corpus.Document{ID, Title, Text, Links, Length}
-         │
-         └─ consumed by index.MemoryIndex.Add(doc, analyzer)
-              │
-              ├─ uses analysis.Analyzer.Analyze(title + " " + text)
-              │    └─ produces []analysis.Token{Term, Position}
-              │         ├─ Position → postings.Entry.Positions
-              │         └─ Term+freq → postings.Entry{DocID, TermFreq, Positions}
-              │
-              └─ stores postings.List{Term, DocFreq, Entries}
-                   ├─ in memory: MemoryIndex.postings map
-                   └─ on disk:   index.WriteSegment → segment.dict/.post/.docs
-                                 index.OpenSegment  → segmentIndex
-                                 (both satisfy index.Index interface)
-
-query.Parse(input string) → query.Node (AST)
-    └─ evaluated by cmd/search.evalNode(node, idx, analyzer)
-         ├─ TermNode   → analyzer.Analyze + idx.Lookup
-         ├─ PhraseNode → idx.Lookup × N terms + postings.PhraseIntersect
-         ├─ AndNode    → evalNode children + postings.Intersect
-         │               OR postings.IntersectGallop (sparse lists)
-         ├─ OrNode     → evalNode children + postings.Union
-         └─ NotNode    → postings.Difference
-
-rank.BM25Scorer.Score(entry, docFreq, docLen)
-    └─ reads idx.NumDocs(), idx.AvgDocLen(), idx.DocLen()
-    └─ returns float64 contribution for one term
-
-link.PageRank(graph, N=250000, d=0.85, iters=30)
-    └─ graph built from corpus.Document.Links via link.BuildGraph
-    └─ returns []float64 (one per docID, sums to 1.0)
-
-final_score = Σ BM25.Score(term) + w × log(1 + PageRank[docID])
-
-rank.TopK(results []rank.Result, k=10)
-    └─ min-heap internally (container/heap)
-    └─ returns []rank.Result sorted descending
-
-rank.Snippet(text, queryTerms, windowSize=160)
-    └─ sliding word window, density scoring
-    └─ returns passage with ANSI bold highlights
-
-eval.PrecisionAtK / eval.MRR / eval.NDCGAtK
-    └─ compare top-k titles against testdata/queries.json judgments
-    └─ used by cmd/eval and cmd/baseline to print comparison table
+User types: "climate change" AND ocean
+  │
+  │ query.Parse()
+  │   lex → [PHRASE("climate change"), AND, WORD("ocean"), EOF]
+  │   parse → AndNode{PhraseNode["climate","change"], TermNode["ocean"]}
+  ▼
+AST
+  │
+  │ evalNode(AndNode):
+  │   evalNode(PhraseNode):
+  │     Lookup("climat") → [{DocID:0, pos:[0]}]
+  │     Lookup("chang")  → [{DocID:0, pos:[1]}]
+  │     PhraseIntersect(gap=1): pos[0]+1=1 == pos[1][0]=1 → doc0 matches
+  │     result: [{DocID:0}]
+  │
+  │   evalNode(TermNode["ocean"]):
+  │     Lookup("ocean") → [{DocID:0}, {DocID:1}]
+  │
+  │   Intersect(phrase_result, ocean_result):
+  │     two-pointer: docID 0 in both → emit; docID 1 only in ocean → skip
+  │     result: [{DocID:0}]
+  ▼
+candidates: [{DocID:0}]
+  │
+  │ Cache term posting lists (once per query, not per doc):
+  │   termPLs["climat"] = {DocFreq:1}
+  │   termPLs["chang"]  = {DocFreq:1}
+  │   termPLs["ocean"]  = {DocFreq:2}
+  │
+  │ BM25.Score(entry, docFreq, DocLen) per term, sum:
+  │   score("climat") = 0.674
+  │   score("chang")  = 0.674
+  │   score("ocean")  = 0.177
+  │   bm25_total      = 1.525
+  │
+  │ PageRank blend:
+  │   final = 1.525 + 1.0 × log(1 + 0.62) = 2.007
+  ▼
+results: [{DocID:0, Score:2.007}]
+  │
+  │ TopK(k=10): 1 result fits, return as-is
+  │
+  │ Snippet(doc0.Text, queryTerms):
+  │   best window → "Climate change affects the ocean and plant life globally."
+  │   highlight → "\033[1mClimate\033[0m \033[1mchange\033[0m affects the \033[1mocean\033[0m..."
+  ▼
+1. Climate Change (2.0070)
+   Climate change affects the ocean and plant life globally.
 ```
