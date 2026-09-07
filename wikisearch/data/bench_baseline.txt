@@ -1,0 +1,12 @@
+BenchmarkBuild-10     	      26	  41840218 ns/op	12183855 B/op	  225185 allocs/op
+BenchmarkBuild-10     	      28	  41958103 ns/op	12183861 B/op	  225185 allocs/op
+BenchmarkBuild-10     	      28	  42070555 ns/op	12184074 B/op	  225185 allocs/op
+BenchmarkLookup-10    	187721880	         7.739 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookup-10    	156232004	         6.408 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookup-10    	162452930	         7.097 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntersect-10          	   14101	     85370 ns/op	  594532 B/op	      16 allocs/op
+BenchmarkIntersect-10          	   13886	     87319 ns/op	  594532 B/op	      16 allocs/op
+BenchmarkIntersect-10          	   13819	     85260 ns/op	  594532 B/op	      16 allocs/op
+BenchmarkIntersectGallop-10    	  310915	      3809 ns/op	    9312 B/op	       8 allocs/op
+BenchmarkIntersectGallop-10    	  323931	      3766 ns/op	    9312 B/op	       8 allocs/op
+BenchmarkIntersectGallop-10    	  317460	      3749 ns/op	    9312 B/op	       8 allocs/op
