@@ -29,14 +29,24 @@ func (m *MemoryIndex) Add(doc corpus.Document, a *analysis.Analyzer) {
 	tokens := a.Analyze(doc.Title + " " + doc.Text)
 	doc.Length = uint32(len(tokens))
 
-	freq := make(map[string]uint32, len(tokens))
-	for _, tok := range tokens {
-		freq[tok.Term]++
+	// Collect positions per term — needed for phrase queries (Sprint 6).
+	type termData struct {
+		positions []uint32
 	}
-	for term, tf := range freq {
+	byTerm := make(map[string]*termData, len(tokens))
+	for _, tok := range tokens {
+		td := byTerm[tok.Term]
+		if td == nil {
+			td = &termData{}
+			byTerm[tok.Term] = td
+		}
+		td.positions = append(td.positions, uint32(tok.Position))
+	}
+	for term, td := range byTerm {
 		m.postings[term] = append(m.postings[term], postings.Entry{
-			DocID:    doc.ID,
-			TermFreq: tf,
+			DocID:     doc.ID,
+			TermFreq:  uint32(len(td.positions)),
+			Positions: td.positions,
 		})
 	}
 
