@@ -1,0 +1,17 @@
+[
+  {"query": "photosynthesis", "relevant": ["Photosynthesis", "Plant", "Chlorophyll", "Leaf"]},
+  {"query": "world war two", "relevant": ["World War II", "Adolf Hitler", "Nazi Germany", "Holocaust"]},
+  {"query": "mercury", "relevant": ["Mercury (planet)", "Mercury (element)", "Mercury (mythology)"]},
+  {"query": "python programming", "relevant": ["Python (programming language)", "Programming language"]},
+  {"query": "solar system planets", "relevant": ["Solar System", "Planet", "Jupiter", "Saturn", "Earth"]},
+  {"query": "evolution darwin", "relevant": ["Evolution", "Charles Darwin", "Natural selection"]},
+  {"query": "water molecule", "relevant": ["Water", "Molecule", "Hydrogen", "Oxygen"]},
+  {"query": "french revolution", "relevant": ["French Revolution", "Napoleon Bonaparte", "Marie Antoinette"]},
+  {"query": "quantum mechanics", "relevant": ["Quantum mechanics", "Wave function", "Electron"]},
+  {"query": "black hole", "relevant": ["Black hole", "Gravity", "Neutron star"]},
+  {"query": "music jazz", "relevant": ["Jazz", "Blues", "Music"]},
+  {"query": "football soccer", "relevant": ["Association football", "FIFA World Cup", "Football"]},
+  {"query": "amazon river rainforest", "relevant": ["Amazon River", "Amazon rainforest", "Brazil"]},
+  {"query": "gravity newton", "relevant": ["Gravity", "Isaac Newton", "Classical mechanics"]},
+  {"query": "democracy election voting", "relevant": ["Democracy", "Election", "Voting"]}
+]

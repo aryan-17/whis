@@ -1,25 +1,29 @@
-// Command search is an interactive ranked search REPL over an in-memory index.
-// Sprint 4: BM25 scoring + top-k heap replaces docID-order output.
+// Command eval runs the evaluation harness and prints P@10/MRR/NDCG.
 package main
 
 import (
-	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"strings"
-	"time"
 
 	"wikisearch/internal/analysis"
 	"wikisearch/internal/corpus"
+	"wikisearch/internal/eval"
 	"wikisearch/internal/index"
 	"wikisearch/internal/postings"
 	"wikisearch/internal/rank"
 )
 
+type queryCase struct {
+	Query    string   `json:"query"`
+	Relevant []string `json:"relevant"`
+}
+
 func main() {
 	dump := flag.String("dump", "", "path to dump (.json.gz or .json.bz2)")
+	queries := flag.String("queries", "testdata/queries.json", "path to queries.json")
 	flag.Parse()
 	if *dump == "" {
 		log.Fatal("-dump required")
@@ -50,29 +54,25 @@ func main() {
 
 	scorer := rank.NewBM25(idx, 1.2, 0.75)
 
-	// REPL.
-	sc := bufio.NewScanner(os.Stdin)
-	fmt.Print("> ")
-	for sc.Scan() {
-		query := strings.TrimSpace(sc.Text())
-		if query == "" {
-			fmt.Print("> ")
-			continue
-		}
+	// Load query cases.
+	data, err := os.ReadFile(*queries)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var cases []queryCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		log.Fatal(err)
+	}
 
-		start := time.Now()
-		tokens := a.Analyze(query)
+	var totalP, totalMRR, totalNDCG float64
+	for _, c := range cases {
+		tokens := a.Analyze(c.Query)
 		if len(tokens) == 0 {
-			fmt.Println("(no terms after analysis)")
-			fmt.Print("> ")
 			continue
 		}
 
-		// AND all terms together.
 		result, ok := idx.Lookup(tokens[0].Term)
 		if !ok {
-			fmt.Printf("found 0 documents in %s\n", time.Since(start))
-			fmt.Print("> ")
 			continue
 		}
 		for _, tok := range tokens[1:] {
@@ -84,7 +84,7 @@ func main() {
 			result = postings.Intersect(result, other)
 		}
 
-		// Score each candidate with BM25.
+		// Score and rank.
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
 			var score float64
@@ -99,12 +99,23 @@ func main() {
 		}
 
 		top := rank.TopK(results, 10)
-		elapsed := time.Since(start)
-		fmt.Printf("found %d documents in %s\n", len(result.Entries), elapsed)
+		titles := make([]string, len(top))
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
-			fmt.Printf("%d. %s (%.4f)\n", i+1, doc.Title, res.Score)
+			titles[i] = doc.Title
 		}
-		fmt.Print("> ")
+
+		rel := make(map[string]bool, len(c.Relevant))
+		for _, r := range c.Relevant {
+			rel[r] = true
+		}
+
+		totalP += eval.PrecisionAtK(titles, rel, 10)
+		totalMRR += eval.MRR(titles, rel)
+		totalNDCG += eval.NDCGAtK(titles, rel, 10)
 	}
+
+	n := float64(len(cases))
+	fmt.Printf("\n%-20s  %6s  %6s  %8s\n", "ranker", "P@10", "MRR", "NDCG@10")
+	fmt.Printf("%-20s  %6.3f  %6.3f  %8.3f\n", "mine (bm25)", totalP/n, totalMRR/n, totalNDCG/n)
 }
