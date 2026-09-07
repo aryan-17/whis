@@ -29,7 +29,6 @@ func main() {
 		log.Fatal("-dump required")
 	}
 
-	// Build index.
 	fmt.Print("building index...")
 	r, err := corpus.NewReader(*dump)
 	if err != nil {
@@ -54,7 +53,6 @@ func main() {
 
 	scorer := rank.NewBM25(idx, 1.2, 0.75)
 
-	// Load query cases.
 	data, err := os.ReadFile(*queries)
 	if err != nil {
 		log.Fatal(err)
@@ -84,7 +82,6 @@ func main() {
 			result = postings.Intersect(result, other)
 		}
 
-		// Score and rank.
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
 			var score float64
@@ -109,7 +106,6 @@ func main() {
 		for _, r := range c.Relevant {
 			rel[r] = true
 		}
-
 		totalP += eval.PrecisionAtK(titles, rel, 10)
 		totalMRR += eval.MRR(titles, rel)
 		totalNDCG += eval.NDCGAtK(titles, rel, 10)

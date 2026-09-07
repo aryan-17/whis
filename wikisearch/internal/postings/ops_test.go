@@ -3,21 +3,18 @@ package postings_test
 import (
 	"testing"
 
-	"wikisearch/internal/index"
 	"wikisearch/internal/postings"
 )
 
-// pl builds a PostingList from a list of docIDs (termFreq=1 each).
-func pl(docIDs ...uint32) index.PostingList {
-	entries := make([]index.PostingEntry, len(docIDs))
+func pl(docIDs ...uint32) postings.List {
+	entries := make([]postings.Entry, len(docIDs))
 	for i, id := range docIDs {
-		entries[i] = index.PostingEntry{DocID: id, TermFreq: 1}
+		entries[i] = postings.Entry{DocID: id, TermFreq: 1}
 	}
-	return index.PostingList{DocFreq: uint32(len(entries)), Entries: entries}
+	return postings.List{DocFreq: uint32(len(entries)), Entries: entries}
 }
 
-// ids extracts docIDs from a PostingList for easy comparison.
-func ids(p index.PostingList) []uint32 {
+func ids(p postings.List) []uint32 {
 	out := make([]uint32, len(p.Entries))
 	for i, e := range p.Entries {
 		out[i] = e.DocID
@@ -39,7 +36,7 @@ func eqU32(a, b []uint32) bool {
 
 func TestIntersect(t *testing.T) {
 	cases := []struct {
-		a, b index.PostingList
+		a, b postings.List
 		want []uint32
 	}{
 		{pl(1, 3, 5, 7), pl(2, 3, 5, 8), []uint32{3, 5}},
@@ -50,15 +47,14 @@ func TestIntersect(t *testing.T) {
 	for _, c := range cases {
 		got := ids(postings.Intersect(c.a, c.b))
 		if !eqU32(got, c.want) {
-			t.Errorf("Intersect(%v, %v) = %v, want %v",
-				ids(c.a), ids(c.b), got, c.want)
+			t.Errorf("Intersect(%v, %v) = %v, want %v", ids(c.a), ids(c.b), got, c.want)
 		}
 	}
 }
 
 func TestUnion(t *testing.T) {
 	cases := []struct {
-		a, b index.PostingList
+		a, b postings.List
 		want []uint32
 	}{
 		{pl(1, 3), pl(2, 3, 4), []uint32{1, 2, 3, 4}},
@@ -68,15 +64,14 @@ func TestUnion(t *testing.T) {
 	for _, c := range cases {
 		got := ids(postings.Union(c.a, c.b))
 		if !eqU32(got, c.want) {
-			t.Errorf("Union(%v, %v) = %v, want %v",
-				ids(c.a), ids(c.b), got, c.want)
+			t.Errorf("Union(%v, %v) = %v, want %v", ids(c.a), ids(c.b), got, c.want)
 		}
 	}
 }
 
 func TestDifference(t *testing.T) {
 	cases := []struct {
-		a, b index.PostingList
+		a, b postings.List
 		want []uint32
 	}{
 		{pl(1, 2, 3, 4), pl(2, 4), []uint32{1, 3}},
@@ -86,8 +81,7 @@ func TestDifference(t *testing.T) {
 	for _, c := range cases {
 		got := ids(postings.Difference(c.a, c.b))
 		if !eqU32(got, c.want) {
-			t.Errorf("Difference(%v, %v) = %v, want %v",
-				ids(c.a), ids(c.b), got, c.want)
+			t.Errorf("Difference(%v, %v) = %v, want %v", ids(c.a), ids(c.b), got, c.want)
 		}
 	}
 }

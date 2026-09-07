@@ -1,4 +1,4 @@
-// Command index builds a search index from a CirrusSearch dump.
+// Command index builds a search index from a CirrusSearch dump and writes it to disk.
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 
 func main() {
 	dump := flag.String("dump", "", "path to dump (.json.gz or .json.bz2)")
+	out := flag.String("index", "data/index", "directory to write segment files")
 	flag.Parse()
 	if *dump == "" {
 		log.Fatal("-dump required")
@@ -45,6 +46,11 @@ func main() {
 		}
 	}
 	idx.Finalize()
-
 	fmt.Printf("\nindexed %d docs in %s\n", count, time.Since(start))
+
+	fmt.Printf("writing segment to %s...", *out)
+	if err := index.WriteSegment(idx, *out); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(" done")
 }

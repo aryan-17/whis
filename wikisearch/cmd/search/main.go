@@ -1,5 +1,4 @@
 // Command search is an interactive ranked search REPL over an in-memory index.
-// Sprint 4: BM25 scoring + top-k heap replaces docID-order output.
 package main
 
 import (
@@ -25,7 +24,6 @@ func main() {
 		log.Fatal("-dump required")
 	}
 
-	// Build index.
 	fmt.Print("building index...")
 	r, err := corpus.NewReader(*dump)
 	if err != nil {
@@ -50,7 +48,6 @@ func main() {
 
 	scorer := rank.NewBM25(idx, 1.2, 0.75)
 
-	// REPL.
 	sc := bufio.NewScanner(os.Stdin)
 	fmt.Print("> ")
 	for sc.Scan() {
@@ -68,7 +65,6 @@ func main() {
 			continue
 		}
 
-		// AND all terms together.
 		result, ok := idx.Lookup(tokens[0].Term)
 		if !ok {
 			fmt.Printf("found 0 documents in %s\n", time.Since(start))
@@ -84,7 +80,6 @@ func main() {
 			result = postings.Intersect(result, other)
 		}
 
-		// Score each candidate with BM25.
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
 			var score float64
@@ -99,8 +94,7 @@ func main() {
 		}
 
 		top := rank.TopK(results, 10)
-		elapsed := time.Since(start)
-		fmt.Printf("found %d documents in %s\n", len(result.Entries), elapsed)
+		fmt.Printf("found %d documents in %s\n", len(result.Entries), time.Since(start))
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
 			fmt.Printf("%d. %s (%.4f)\n", i+1, doc.Title, res.Score)

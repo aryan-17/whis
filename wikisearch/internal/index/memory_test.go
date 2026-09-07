@@ -26,7 +26,6 @@ func buildTestIndex(t *testing.T) index.Index {
 
 func TestLookupExists(t *testing.T) {
 	idx := buildTestIndex(t)
-	// "photosynthesis" stems to "photosynthesi"
 	pl, ok := idx.Lookup("photosynthesi")
 	if !ok {
 		t.Fatal("lookup photosynthesi: not found")
@@ -64,7 +63,6 @@ func TestNumDocs(t *testing.T) {
 
 func TestDocLen(t *testing.T) {
 	idx := buildTestIndex(t)
-	// Length must be non-zero for all docs.
 	for i := uint32(0); i < 3; i++ {
 		if idx.DocLen(i) == 0 {
 			t.Errorf("DocLen(%d) = 0", i)

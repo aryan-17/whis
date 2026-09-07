@@ -1,18 +1,15 @@
-// Package postings implements operations on posting lists.
 package postings
 
-import "wikisearch/internal/index"
-
 // Intersect returns entries present in both a and b (AND), sorted by DocID.
-// Uses two-pointer merge — O(n+m), no hashing.
-func Intersect(a, b index.PostingList) index.PostingList {
-	var out []index.PostingEntry
+// Two-pointer merge — O(n+m), no hashing.
+func Intersect(a, b List) List {
+	var out []Entry
 	i, j := 0, 0
 	for i < len(a.Entries) && j < len(b.Entries) {
 		ai, bj := a.Entries[i].DocID, b.Entries[j].DocID
 		switch {
 		case ai == bj:
-			out = append(out, index.PostingEntry{
+			out = append(out, Entry{
 				DocID:    ai,
 				TermFreq: a.Entries[i].TermFreq + b.Entries[j].TermFreq,
 			})
@@ -24,18 +21,18 @@ func Intersect(a, b index.PostingList) index.PostingList {
 			j++
 		}
 	}
-	return index.PostingList{DocFreq: uint32(len(out)), Entries: out}
+	return List{DocFreq: uint32(len(out)), Entries: out}
 }
 
 // Union returns all entries in a or b (OR), sorted by DocID.
-func Union(a, b index.PostingList) index.PostingList {
-	var out []index.PostingEntry
+func Union(a, b List) List {
+	var out []Entry
 	i, j := 0, 0
 	for i < len(a.Entries) && j < len(b.Entries) {
 		ai, bj := a.Entries[i].DocID, b.Entries[j].DocID
 		switch {
 		case ai == bj:
-			out = append(out, index.PostingEntry{
+			out = append(out, Entry{
 				DocID:    ai,
 				TermFreq: a.Entries[i].TermFreq + b.Entries[j].TermFreq,
 			})
@@ -51,12 +48,12 @@ func Union(a, b index.PostingList) index.PostingList {
 	}
 	out = append(out, a.Entries[i:]...)
 	out = append(out, b.Entries[j:]...)
-	return index.PostingList{DocFreq: uint32(len(out)), Entries: out}
+	return List{DocFreq: uint32(len(out)), Entries: out}
 }
 
 // Difference returns entries in a but not in b (NOT b), sorted by DocID.
-func Difference(a, b index.PostingList) index.PostingList {
-	var out []index.PostingEntry
+func Difference(a, b List) List {
+	var out []Entry
 	i, j := 0, 0
 	for i < len(a.Entries) {
 		if j >= len(b.Entries) || a.Entries[i].DocID < b.Entries[j].DocID {
@@ -69,5 +66,5 @@ func Difference(a, b index.PostingList) index.PostingList {
 			j++
 		}
 	}
-	return index.PostingList{DocFreq: uint32(len(out)), Entries: out}
+	return List{DocFreq: uint32(len(out)), Entries: out}
 }

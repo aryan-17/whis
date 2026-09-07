@@ -1,12 +1,12 @@
 // Package rank implements scoring, ranking, and result selection.
 package rank
 
-import "wikisearch/internal/index"
+import "wikisearch/internal/postings"
 
 // Scorer assigns a relevance score to one (term, document) pair.
 // Call for each query term and sum to get the full document score.
 type Scorer interface {
-	Score(entry index.PostingEntry, docFreq uint32, docLen uint32) float64
+	Score(entry postings.Entry, docFreq uint32, docLen uint32) float64
 }
 
 // Result is one ranked search result.
