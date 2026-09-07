@@ -1,5 +1,4 @@
 // Command search — interactive ranked search REPL.
-// Sprint 7: BM25 + PageRank score blending, phrase queries, snippets.
 package main
 
 import (
@@ -24,51 +23,63 @@ import (
 )
 
 func main() {
-	dump := flag.String("dump", "", "path to dump (.json.gz or .json.bz2)")
-	idxDir := flag.String("index", "", "pre-built segment directory (optional)")
+	dump := flag.String("dump", "", "path to dump (.json.gz or .json.bz2); required unless -index given")
+	idxDir := flag.String("index", "", "pre-built segment directory (fast startup)")
 	prWeight := flag.Float64("pr-weight", 1.0, "PageRank blend weight")
 	flag.Parse()
-	if *dump == "" {
-		log.Fatal("-dump required")
-	}
-
-	fmt.Print("building index...")
-	r, err := corpus.NewReader(*dump)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer r.Close()
 
 	a := analysis.NewAnalyzer()
-	idx := index.NewMemoryIndex()
-	var allLinks [][]string
-	titleToID := make(map[string]uint32)
+	var idx index.Index
+	var prScores []float64
 
-	for {
-		doc, ok, err := r.Next()
+	if *idxDir != "" {
+		// Fast path: load pre-built segment from disk (milliseconds).
+		seg, err := index.OpenSegment(*idxDir)
+		if err != nil {
+			log.Fatalf("open segment: %v", err)
+		}
+		idx = seg
+		fmt.Printf("loaded segment (%d docs)\n", idx.NumDocs())
+
+		// Load PageRank if available.
+		if data, err := os.ReadFile(filepath.Join(*idxDir, "pagerank.json")); err == nil {
+			if err := json.Unmarshal(data, &prScores); err != nil {
+				log.Printf("warn: pagerank.json parse failed: %v", err)
+			} else {
+				fmt.Println("loaded PageRank from disk")
+			}
+		}
+	} else {
+		// Slow path: build MemoryIndex from dump.
+		if *dump == "" {
+			log.Fatal("-dump or -index required")
+		}
+		fmt.Print("building index...")
+		r, err := corpus.NewReader(*dump)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if !ok {
-			break
-		}
-		idx.Add(doc, a)
-		titleToID[doc.Title] = doc.ID
-		allLinks = append(allLinks, doc.Links)
-	}
-	idx.Finalize()
-	fmt.Printf(" done (%d docs)\n", idx.NumDocs())
+		defer r.Close()
 
-	// Load or compute PageRank.
-	var prScores []float64
-	prPath := filepath.Join(*idxDir, "pagerank.json")
-	if *idxDir != "" {
-		if data, err := os.ReadFile(prPath); err == nil {
-			json.Unmarshal(data, &prScores)
-			fmt.Println("loaded PageRank from disk")
+		mem := index.NewMemoryIndex()
+		var allLinks [][]string
+		titleToID := make(map[string]uint32)
+		for {
+			doc, ok, err := r.Next()
+			if err != nil {
+				log.Fatal(err)
+			}
+			if !ok {
+				break
+			}
+			mem.Add(doc, a)
+			titleToID[doc.Title] = doc.ID
+			allLinks = append(allLinks, doc.Links)
 		}
-	}
-	if len(prScores) == 0 {
+		mem.Finalize()
+		idx = mem
+		fmt.Printf(" done (%d docs)\n", idx.NumDocs())
+
 		fmt.Print("computing PageRank...")
 		graph := link.BuildGraph(int(idx.NumDocs()), allLinks, titleToID)
 		prScores = link.PageRank(graph, int(idx.NumDocs()), 0.85, 30)
@@ -104,23 +115,31 @@ func main() {
 		}
 
 		queryTerms := collectTerms(ast, a)
+
+		// Cache posting lists once — not per candidate document.
+		termPLs := make(map[string]postings.List, len(queryTerms))
+		for _, term := range queryTerms {
+			if pl, ok := idx.Lookup(term); ok {
+				termPLs[term] = pl
+			}
+		}
+
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
 			var bm25Score float64
 			for _, term := range queryTerms {
-				pl, ok := idx.Lookup(term)
-				if !ok {
-					continue
+				if pl, ok := termPLs[term]; ok {
+					bm25Score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
 				}
-				bm25Score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
 			}
-			// Blend: final = bm25 + w × log(1 + pagerank)
 			pr := 0.0
 			if int(entry.DocID) < len(prScores) {
 				pr = prScores[entry.DocID]
 			}
-			score := bm25Score + *prWeight*math.Log1p(pr)
-			results = append(results, rank.Result{DocID: entry.DocID, Score: score})
+			results = append(results, rank.Result{
+				DocID: entry.DocID,
+				Score: bm25Score + *prWeight*math.Log1p(pr),
+			})
 		}
 
 		top := rank.TopK(results, 10)

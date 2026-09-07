@@ -82,15 +82,21 @@ func main() {
 			result = postings.Intersect(result, other)
 		}
 
+		// Cache posting lists once per query — not per candidate document.
+		termPLs := make(map[string]postings.List, len(tokens))
+		for _, tok := range tokens {
+			if pl, ok := idx.Lookup(tok.Term); ok {
+				termPLs[tok.Term] = pl
+			}
+		}
+
 		results := make([]rank.Result, 0, len(result.Entries))
 		for _, entry := range result.Entries {
 			var score float64
 			for _, tok := range tokens {
-				pl, ok := idx.Lookup(tok.Term)
-				if !ok {
-					continue
+				if pl, ok := termPLs[tok.Term]; ok {
+					score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
 				}
-				score += scorer.Score(entry, pl.DocFreq, idx.DocLen(entry.DocID))
 			}
 			results = append(results, rank.Result{DocID: entry.DocID, Score: score})
 		}

@@ -3,7 +3,12 @@ package postings
 // Intersect returns entries present in both a and b (AND), sorted by DocID.
 // Two-pointer merge — O(n+m), no hashing.
 func Intersect(a, b List) List {
-	var out []Entry
+	// Upper bound: result can't exceed the shorter list.
+	capacity := len(a.Entries)
+	if len(b.Entries) < capacity {
+		capacity = len(b.Entries)
+	}
+	out := make([]Entry, 0, capacity)
 	i, j := 0, 0
 	for i < len(a.Entries) && j < len(b.Entries) {
 		ai, bj := a.Entries[i].DocID, b.Entries[j].DocID
@@ -26,7 +31,7 @@ func Intersect(a, b List) List {
 
 // Union returns all entries in a or b (OR), sorted by DocID.
 func Union(a, b List) List {
-	var out []Entry
+	out := make([]Entry, 0, len(a.Entries)+len(b.Entries))
 	i, j := 0, 0
 	for i < len(a.Entries) && j < len(b.Entries) {
 		ai, bj := a.Entries[i].DocID, b.Entries[j].DocID
@@ -53,7 +58,7 @@ func Union(a, b List) List {
 
 // Difference returns entries in a but not in b (NOT b), sorted by DocID.
 func Difference(a, b List) List {
-	var out []Entry
+	out := make([]Entry, 0, len(a.Entries))
 	i, j := 0, 0
 	for i < len(a.Entries) {
 		if j >= len(b.Entries) || a.Entries[i].DocID < b.Entries[j].DocID {

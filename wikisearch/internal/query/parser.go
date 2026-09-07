@@ -91,12 +91,4 @@ func (p *parser) parseAtom() Node {
 	}
 }
 
-func splitWords(s string) []string {
-	var out []string
-	for _, w := range strings.Fields(s) {
-		if w != "" {
-			out = append(out, w)
-		}
-	}
-	return out
-}
+func splitWords(s string) []string { return strings.Fields(s) }

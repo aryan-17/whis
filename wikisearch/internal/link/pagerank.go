@@ -28,11 +28,16 @@ func PageRank(graph Graph, numDocs int, d float64, iters int) []float64 {
 		}
 	}
 
+	// Precompute which nodes are dangling — avoids map lookup per iteration.
+	isDangling := make([]bool, numDocs)
+	for id := 0; id < numDocs; id++ {
+		isDangling[id] = len(graph[uint32(id)]) == 0
+	}
+
 	for iter := 0; iter < iters; iter++ {
-		// Collect rank from dangling nodes (no outlinks) — redistribute uniformly.
 		var dangling float64
 		for id := 0; id < numDocs; id++ {
-			if len(graph[uint32(id)]) == 0 {
+			if isDangling[id] {
 				dangling += scores[id]
 			}
 		}

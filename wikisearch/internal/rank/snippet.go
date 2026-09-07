@@ -76,14 +76,14 @@ func Snippet(text string, queryTerms []string, windowSize int) string {
 	spanEnd := lastWord.start + len(lastWord.text)
 	snippet := text[spanStart:spanEnd]
 
-	// Highlight query terms with ANSI bold — case-insensitive.
+	// Highlight query terms with ANSI bold — case-insensitive, all occurrences.
+	lsnip := strings.ToLower(snippet)
 	for _, term := range queryTerms {
-		lsnip := strings.ToLower(snippet)
 		lterm := strings.ToLower(term)
 		idx := strings.Index(lsnip, lterm)
 		if idx >= 0 {
 			orig := snippet[idx : idx+len(term)]
-			snippet = strings.Replace(snippet, orig, "\033[1m"+orig+"\033[0m", 1)
+			snippet = strings.ReplaceAll(snippet, orig, "\033[1m"+orig+"\033[0m")
 		}
 	}
 	return snippet
