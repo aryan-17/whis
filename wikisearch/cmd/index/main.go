@@ -1,5 +1,4 @@
 // Command index builds a search index from a CirrusSearch dump.
-// Sprint 1: prints document count and first title as a smoke test.
 package main
 
 import (
@@ -8,7 +7,9 @@ import (
 	"log"
 	"time"
 
+	"wikisearch/internal/analysis"
 	"wikisearch/internal/corpus"
+	"wikisearch/internal/index"
 )
 
 func main() {
@@ -24,10 +25,11 @@ func main() {
 	}
 	defer r.Close()
 
+	a := analysis.NewAnalyzer()
+	idx := index.NewMemoryIndex()
+
 	start := time.Now()
 	var count uint32
-	var firstTitle string
-
 	for {
 		doc, ok, err := r.Next()
 		if err != nil {
@@ -36,15 +38,13 @@ func main() {
 		if !ok {
 			break
 		}
-		if count == 0 {
-			firstTitle = doc.Title
-		}
+		idx.Add(doc, a)
 		count++
 		if count%10000 == 0 {
-			fmt.Printf("\r  read %d docs...", count)
+			fmt.Printf("\r  indexed %d docs...", count)
 		}
 	}
+	idx.Finalize()
 
-	fmt.Printf("\ndocs:        %d\nfirst title: %s\nelapsed:     %s\n",
-		count, firstTitle, time.Since(start))
+	fmt.Printf("\nindexed %d docs in %s\n", count, time.Since(start))
 }
