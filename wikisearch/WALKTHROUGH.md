@@ -1,6 +1,6 @@
 # wikisearch — Complete Code Walkthrough
 
-One example traces every step from raw dump file to ranked search results.
+One example traces every step from raw dump file to ranked search results, then compares against Elasticsearch.
 
 **The query:** `"climate change" AND ocean`  
 **Two documents in our tiny corpus:**
@@ -220,7 +220,7 @@ This sort is the invariant that makes all downstream operations work.
 
 **File:** `internal/index/writer.go` + `segment.go`
 
-Three files written after indexing.
+Three files written after indexing. On the next startup, `cmd/search -index data/index` calls `OpenSegment()` to load them — milliseconds instead of re-reading the dump.
 
 ### segment.post
 
@@ -632,4 +632,106 @@ results: [{DocID:0, Score:2.007}]
   ▼
 1. Climate Change (2.0070)
    Climate change affects the ocean and plant life globally.
+```
+
+---
+
+## Step 11 — Elasticsearch Comparison
+
+**Files:** `cmd/esload/main.go`, `cmd/compare/main.go`
+
+After building your own engine, load the same corpus into Elasticsearch and run the same 15 queries against both.
+
+### Loading into ES (`cmd/esload`)
+
+Creates an index with the `english` analyzer, then bulk-loads in NDJSON pairs:
+
+```
+Action line:   {"index":{"_id":"0"}}
+Document line: {"title":"Climate Change","text":"Climate change affects the ocean..."}
+Action line:   {"index":{"_id":"1"}}
+Document line: {"title":"Ocean","text":"The ocean is a large body..."}
+```
+
+The `english` analyzer uses the same core ideas as ours — lowercase, stopwords, Porter stemming — but is a dictionary-backed production implementation with more edge cases handled correctly.
+
+Loading with `refresh_interval: -1` disables per-document refresh. ES merges segments and refreshes once at the end — faster. Analogous to our `Finalize()` sorting all posting lists once, not after each `Add()`.
+
+### Running the comparison (`cmd/compare`)
+
+For each of the 15 queries in `testdata/queries.json`:
+
+**My engine:**
+```
+analyze("climate change") → ["climat", "chang"]
+Lookup("climat") → candidates
+Intersect with Lookup("chang") → filtered
+BM25 score each + PageRank blend → TopK(10)
+```
+
+**Elasticsearch — HTTP call:**
+```json
+POST localhost:9200/wiki/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "climate change",
+      "fields": ["title^2", "text"],
+      "type": "best_fields"
+    }
+  }
+}
+```
+
+Both produce a ranked list of 10 titles. Compute P@10 / MRR / NDCG@10 against the same relevance judgments. Print side-by-side.
+
+### What the output looks like
+
+```
+my engine: loaded segment (10000 docs)
+elasticsearch: connected at http://localhost:9200
+
+ranker                   P@10     MRR  NDCG@10
+--------------------------------------------------
+mine (bm25+pagerank)    0.620   0.780    0.710
+elasticsearch           0.680   0.810    0.750
+
+query                            my NDCG   es NDCG  winner
+--------------------------------------------------------------
+photosynthesis                     0.850     0.910  es ✓
+world war two                      0.720     0.680  mine ✓
+mercury                            0.450     0.600  es ✓
+...
+```
+
+### Why ES usually wins
+
+**1. Field boosts.** `multi_match` with `title^2` gives title matches 2× weight. Our engine scores both fields with a flat BM25. Adding field-weighted scoring would close this gap.
+
+**2. Irregular word forms.** Porter2 stems `"went"` to `"went"` — no rule matches. ES's `english` analyzer dictionary maps it to `"go"`, correctly matching documents about "going". These silent misses compound across a large corpus.
+
+**3. Production-quality statistics.** ES tracks exact per-segment document frequencies and normalises across them. Our `segmentIndex` works correctly on a single segment but would diverge on a multi-segment index.
+
+### Verifying the analyzers match
+
+```bash
+# What ES produces for the same text
+curl -s 'localhost:9200/wiki/_analyze' \
+  -H 'Content-Type: application/json' \
+  -d '{"analyzer":"english","text":"The running dogs jumped quickly"}' | jq .
+
+# Expected from ours: [run, dog, jump, quick]
+# ES may differ on: irregular plurals, possessives, hyphenated words
+```
+
+### Verifying BM25 scores match
+
+```bash
+# ES score breakdown for doc 0, term "photosynthesis"
+curl 'localhost:9200/wiki/_explain/0' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":{"match":{"text":"photosynthesis"}}}' | jq .
+
+# Response includes: idf value, tf, field length, avgFieldLength
+# Compare each against your BM25 — divergence pinpoints the bug
 ```
