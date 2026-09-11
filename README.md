@@ -12,6 +12,7 @@ A full-text search engine over Simple English Wikipedia, built from scratch in G
 - Supports phrase queries (`"climate change"`), boolean operators (`AND`, `OR`, `NOT`), and field scoping (`title:darwin`)
 - Shows highlighted text snippets for each result
 - Persists the index to disk so startup is milliseconds, not minutes
+- Loads corpus into Elasticsearch and compares both engines side-by-side on P@10 / MRR / NDCG@10
 
 ---
 
@@ -79,16 +80,44 @@ found 47 documents in 1.2ms
 ### 4. Measure quality
 
 ```bash
-# Your engine vs SQLite FTS5
+# Your engine metrics
 go run ./cmd/eval     -dump data/sample.json.gz
+
+# SQLite FTS5 baseline
 go run ./cmd/baseline -dump data/sample.json.gz
 ```
 
+### 5. Compare against Elasticsearch
+
+```bash
+# Start ES (one-time)
+docker run -d --name es -p 9200:9200 \
+  -e "discovery.type=single-node" \
+  -e "xpack.security.enabled=false" \
+  docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+
+# Load corpus into ES (one-time)
+go run ./cmd/esload -dump data/sample.json.gz
+
+# Side-by-side comparison (my engine vs ES)
+go run ./cmd/compare -index data/index -dump data/sample.json.gz
 ```
-ranker                P@10     MRR   NDCG@10
-mine (bm25)          0.620   0.780    0.710
-sqlite fts5          0.680   0.810    0.750
+
 ```
+ranker                   P@10     MRR  NDCG@10
+--------------------------------------------------
+mine (bm25+pagerank)    0.xxx   0.xxx    0.xxx
+elasticsearch           0.xxx   0.xxx    0.xxx
+
+query                            my NDCG   es NDCG  winner
+--------------------------------------------------------------
+photosynthesis                     0.850     0.910  es ✓
+world war two                      0.720     0.680  mine ✓
+mercury                            0.450     0.600  es ✓
+...
+```
+
+`cmd/compare` works without ES — prints your metrics and a message if ES is unreachable.
 
 ---
 
@@ -228,9 +257,11 @@ Slides a word-count window over the document text, picks the passage with the hi
 wikisearch/
 ├── cmd/
 │   ├── index/       build index from dump, write segment + pagerank.json
-│   ├── search/      interactive REPL
+│   ├── search/      interactive REPL (loads segment or rebuilds from dump)
 │   ├── eval/        P@10 / MRR / NDCG@10 evaluation harness
-│   └── baseline/    SQLite FTS5 comparison (same queries, same metrics)
+│   ├── baseline/    SQLite FTS5 comparison (same queries, same metrics)
+│   ├── esload/      bulk-load corpus into Elasticsearch
+│   └── compare/     side-by-side: my engine vs Elasticsearch
 │
 ├── internal/
 │   ├── corpus/      Document type, dump Reader (bzip2/gzip, streaming)
@@ -299,3 +330,22 @@ go test ./... -bench=. -benchmem      # benchmarks
 |------|---------|-------------|
 | `-dump` | required | path to dump |
 | `-queries` | `testdata/queries.json` | path to relevance judgments |
+
+### cmd/esload
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-dump` | required | path to dump |
+| `-es` | `http://localhost:9200` | Elasticsearch base URL |
+| `-index` | `wiki` | ES index name |
+| `-batch` | `500` | documents per bulk request |
+
+### cmd/compare
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-dump` | — | path to dump (required if -index not given) |
+| `-index` | — | pre-built segment directory (fast startup) |
+| `-queries` | `testdata/queries.json` | path to relevance judgments |
+| `-es` | `http://localhost:9200` | Elasticsearch base URL |
+| `-es-index` | `wiki` | ES index name |

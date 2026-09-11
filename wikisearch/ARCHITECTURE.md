@@ -1,6 +1,6 @@
 # wikisearch — Architecture
 
-> Living document. Current as of Sprint 8.
+> Living document. Current as of Sprint 9 (all sprints complete).
 
 ---
 
@@ -56,7 +56,9 @@ wikisearch/
 │   ├── index/       build index from dump, write segment + pagerank.json
 │   ├── search/      interactive REPL (query parser, BM25+PR, snippets)
 │   ├── eval/        P@10 / MRR / NDCG@10 harness
-│   └── baseline/    SQLite FTS5 comparison
+│   ├── baseline/    SQLite FTS5 comparison
+│   ├── esload/      bulk-load corpus into Elasticsearch (english analyzer, title^2)
+│   └── compare/     side-by-side eval: my engine vs Elasticsearch per query
 │
 ├── internal/
 │   ├── corpus/      Document type, dump Reader (bzip2/gzip, streaming)
@@ -166,10 +168,10 @@ cmd/search ──imports──▶ index.Index (interface)
                    ┌───────────┴────────────┐
             MemoryIndex               segmentIndex
          (built at runtime)        (loaded from disk)
-           Sprint 3                   Sprint 5
+         slow, no disk needed      fast startup (ms)
 ```
 
-`cmd/search` was written against the interface in Sprint 3. Sprint 5 added `segmentIndex` without changing a single line of query code. This is the Open/Closed principle: new implementations, zero caller changes.
+`cmd/search` takes `-index` flag → calls `index.OpenSegment()` and starts in milliseconds. Without it, rebuilds `MemoryIndex` from the dump. Query code is identical either way — the interface hides the difference. This is the Open/Closed principle: new implementations, zero caller changes.
 
 ---
 
@@ -470,7 +472,42 @@ Supported:
 | ✅ 6 | Positional index, `PhraseIntersect`, query lexer+parser+AST, `Snippet` | `4dcdf86` |
 | ✅ 7 | `link.Graph`, `PageRank`, BM25+PR score blending | `8be292b` |
 | ✅ 8 | `IntersectGallop` (22× speedup), benchmarks, `bench_baseline.txt` | `efdb79f` |
-| ⬜ 9 | Elasticsearch bulk load, `_analyze`/`_explain` verification, eval table | — |
+| ✅ 9 | `cmd/esload` (bulk loader), `cmd/compare` (side-by-side eval table) | `63370f3` |
+
+---
+
+## Elasticsearch comparison (Sprint 9)
+
+`cmd/esload` creates an index with the `english` analyzer (same stemming/stopwords as ours) and bulk-loads the corpus. `cmd/compare` queries both engines with the same 15 queries and prints a table.
+
+**ES index config:**
+```json
+{
+  "title": { "type": "text", "analyzer": "english", "boost": 2 },
+  "text":  { "type": "text", "analyzer": "english" }
+}
+```
+
+**ES query per search:**
+```json
+{
+  "query": {
+    "multi_match": {
+      "query": "<user input>",
+      "fields": ["title^2", "text"],
+      "type": "best_fields"
+    }
+  }
+}
+```
+
+**What to compare:**
+- Aggregate P@10 / MRR / NDCG@10 side by side
+- Per-query NDCG with winner column
+- Use `_analyze` endpoint to diff tokenization vs your pipeline
+- Use `_explain` endpoint to diff BM25 scores on same doc+term
+
+**Why ES often wins:** its BM25 implementation handles edge cases (numeric fields, position information, index statistics) more precisely. Its `english` analyzer also uses a dictionary-based approach for irregular forms that Porter2 misses (e.g. `"went"` → `"go"`).
 
 ---
 
