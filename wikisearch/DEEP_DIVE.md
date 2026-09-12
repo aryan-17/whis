@@ -25,6 +25,7 @@ doc2  title="Ocean Pollution"
 ```
 
 **What should happen:**
+
 - doc0 → has the phrase "climate change" + has "ocean" + no "pollution" → **should match**
 - doc1 → has "ocean" but NOT the phrase "climate change" adjacent → **eliminated at phrase step**
 - doc2 → has the phrase + ocean BUT also has "pollution" → **eliminated at NOT step**
@@ -99,6 +100,7 @@ Title is prepended to text so title terms get higher TF naturally.
 Split on non-letter/non-digit runs using `unicode.IsLetter` (not ASCII — handles accented chars). Record ordinal position starting at 0.
 
 **doc0:**
+
 ```
 "Climate Change Climate change affects the ocean and plant life globally."
 
@@ -108,6 +110,7 @@ Tokens:
 ```
 
 **doc1:**
+
 ```
 "Ocean The ocean is a large body of water Ocean pollution affects marine life."
 
@@ -117,6 +120,7 @@ Tokens:
 ```
 
 **doc2:**
+
 ```
 "Ocean Pollution Ocean pollution is caused by industrial waste and climate change."
 
@@ -147,7 +151,8 @@ Stopwords hit: `the`, `is`, `a`, `of`, `and`, `by`
 
 **doc0 before:** `{climate,0} {change,1} {climate,2} {change,3} {affects,4} {THE,5} {ocean,6} {AND,7} {plant,8} {life,9} {globally,10}`
 
-**doc0 after:**  `{climate,0} {change,1} {climate,2} {change,3} {affects,4}          {ocean,6}          {plant,8} {life,9} {globally,10}`
+**doc0 after:** `{climate,0} {change,1} {climate,2} {change,3} {affects,4}          {ocean,6}          {plant,8} {life,9} {globally,10}`
+
 ```
                                                                             ↑ gap                   ↑ gap
                                                                          pos 5 gone              pos 7 gone
@@ -155,11 +160,11 @@ Stopwords hit: `the`, `is`, `a`, `of`, `and`, `by`
 
 **doc1 before:** `{ocean,0} {THE,1} {ocean,2} {IS,3} {A,4} {large,5} {body,6} {OF,7} {water,8} {ocean,9} {pollution,10} {affects,11} {marine,12} {life,13}`
 
-**doc1 after:**  `{ocean,0}          {ocean,2}               {large,5} {body,6}          {water,8} {ocean,9} {pollution,10} {affects,11} {marine,12} {life,13}`
+**doc1 after:** `{ocean,0}          {ocean,2}               {large,5} {body,6}          {water,8} {ocean,9} {pollution,10} {affects,11} {marine,12} {life,13}`
 
 **doc2 before:** `{ocean,0} {pollution,1} {ocean,2} {pollution,3} {IS,4} {caused,5} {BY,6} {industrial,7} {waste,8} {AND,9} {climate,10} {change,11}`
 
-**doc2 after:**  `{ocean,0} {pollution,1} {ocean,2} {pollution,3}          {caused,5}          {industrial,7} {waste,8}          {climate,10} {change,11}`
+**doc2 after:** `{ocean,0} {pollution,1} {ocean,2} {pollution,3}          {caused,5}          {industrial,7} {waste,8}          {climate,10} {change,11}`
 
 **Why gaps matter for phrase queries:**
 In doc2, "climate" is at position 10 and "change" at position 11. Gap = 1 → adjacent → phrase match.
@@ -169,23 +174,23 @@ If positions were renumbered after dropping stopwords, the positions would shift
 
 Applied after lowercase. Key rule groups:
 
-| Input | Steps applied | Output |
-|-------|--------------|--------|
-| `climate` | Step 5a: ends in `e` in R1 → strip | `climat` |
-| `change` | Step 5a: ends in `e` in R1 → strip | `chang` |
-| `affects` | Step 1a: ends in `s`, vowel before → strip | `affect` |
-| `ocean` | No rules match | `ocean` |
-| `plant` | No rules match | `plant` |
-| `life` | Step 5a: ends in `e` in R1 → strip | `lif` |
-| `globally` | Step 1c: `y`→`i` → `globalli`; Step 2: ends in `li`, `l` valid → strip `li` | `global` |
-| `pollution` | Step 4: ends in `ion` in R2, preceded by `t` → strip | `pollut` |
-| `large` | Step 5a: ends in `e` in R1 → strip | `larg` |
-| `body` | Step 1c: `y`→`i`, consonant before → `bodi` | `bodi` |
-| `water` | No rules match | `water` |
-| `marine` | Step 5a: ends in `e` in R1 → strip | `marin` |
-| `caused` | Step 1b: ends in `ed`, vowel before → strip → `caus` | `caus` |
-| `industrial` | Step 3: ends in `al` in R1 → strip → `industri` | `industri` |
-| `waste` | Step 5a: ends in `e` in R1 → strip | `wast` |
+| Input        | Steps applied                                                               | Output     |
+| ------------ | --------------------------------------------------------------------------- | ---------- |
+| `climate`    | Step 5a: ends in `e` in R1 → strip                                          | `climat`   |
+| `change`     | Step 5a: ends in `e` in R1 → strip                                          | `chang`    |
+| `affects`    | Step 1a: ends in `s`, vowel before → strip                                  | `affect`   |
+| `ocean`      | No rules match                                                              | `ocean`    |
+| `plant`      | No rules match                                                              | `plant`    |
+| `life`       | Step 5a: ends in `e` in R1 → strip                                          | `lif`      |
+| `globally`   | Step 1c: `y`→`i` → `globalli`; Step 2: ends in `li`, `l` valid → strip `li` | `global`   |
+| `pollution`  | Step 4: ends in `ion` in R2, preceded by `t` → strip                        | `pollut`   |
+| `large`      | Step 5a: ends in `e` in R1 → strip                                          | `larg`     |
+| `body`       | Step 1c: `y`→`i`, consonant before → `bodi`                                 | `bodi`     |
+| `water`      | No rules match                                                              | `water`    |
+| `marine`     | Step 5a: ends in `e` in R1 → strip                                          | `marin`    |
+| `caused`     | Step 1b: ends in `ed`, vowel before → strip → `caus`                        | `caus`     |
+| `industrial` | Step 3: ends in `al` in R1 → strip → `industri`                             | `industri` |
+| `waste`      | Step 5a: ends in `e` in R1 → strip                                          | `wast`     |
 
 **Final token streams:**
 
@@ -206,6 +211,7 @@ doc2: [{ocean,0},{pollut,1},{ocean,2},{pollut,3},{caus,5},{industri,7},{wast,8},
 `MemoryIndex.Add()` processes each document. For each term, count `TermFreq` and record `Positions`:
 
 **After doc0 (ID=0):**
+
 ```
 postings["climat"] = [{DocID:0, tf:2, pos:[0,2]}]    ← "Climate Change Climate change..."
 postings["chang"]  = [{DocID:0, tf:2, pos:[1,3]}]
@@ -217,6 +223,7 @@ postings["global"] = [{DocID:0, tf:1, pos:[10]}]
 ```
 
 **After doc1 (ID=1):**
+
 ```
 postings["ocean"]  = [{DocID:0, tf:1, pos:[6]}, {DocID:1, tf:3, pos:[0,2,9]}]
 postings["larg"]   = [{DocID:1, tf:1, pos:[5]}]
@@ -229,6 +236,7 @@ postings["lif"]    = [{DocID:0, tf:1, pos:[9]}, {DocID:1, tf:1, pos:[13]}]
 ```
 
 **After doc2 (ID=2):**
+
 ```
 postings["ocean"]  = [{DocID:0, tf:1, pos:[6]}, {DocID:1, tf:3, pos:[0,2,9]}, {DocID:2, tf:2, pos:[0,2]}]
 postings["pollut"] = [{DocID:1, tf:1, pos:[10]}, {DocID:2, tf:2, pos:[1,3]}]
@@ -310,6 +318,7 @@ buf = [02][01][01][01][02]
 ```
 
 **Varint encoding** — bit 8 of each byte is "more follows" flag, bits 1-7 carry value:
+
 ```
 value 0   → [00000000]           = 1 byte
 value 1   → [00000001]           = 1 byte
@@ -337,6 +346,7 @@ Loaded into memory as `map[string][2]uint64`. Lookup: hash → (offset, length) 
 ### segment.docs — Document metadata
 
 Line number = docID:
+
 ```
 line 0 → {"t":"Climate Change","l":9}
 line 1 → {"t":"Ocean","l":10}
@@ -360,18 +370,23 @@ doc0 = 0.45, doc1 = 0.32, doc2 = 0.23. Computed after indexing. (See Step 9.)
 **File:** `cmd/search/main.go`
 
 **Slow path (first time or no segment):**
+
 ```bash
 go run ./cmd/search -dump data/sample.json.gz
 ```
+
 Rebuilds MemoryIndex from scratch. Reads dump → analyzes → builds posting map → Finalize. Minutes on full corpus.
 
 **Fast path (pre-built segment):**
+
 ```bash
 go run ./cmd/search -index data/index
 ```
+
 ```go
 idx, err := index.OpenSegment(*idxDir)   // milliseconds
 ```
+
 Reads `segment.dict` into map, reads `segment.post` into `[]byte`, scans `segment.docs` line-by-line. No analysis, no posting list sorting. Same `index.Index` interface — query code is identical.
 
 Loading `pagerank.json` if present → `[]float64` array.
@@ -408,6 +423,7 @@ EOF          → emit: EOF
 ```
 
 **Token stream:**
+
 ```
 [PHRASE("climate change"), AND, WORD("ocean"), NOT, WORD("pollution"), EOF]
 ```
@@ -415,6 +431,7 @@ EOF          → emit: EOF
 ### 6.2 Recursive Descent Parser
 
 Grammar (higher = higher precedence):
+
 ```
 expr   := term (OR term)*
 term   := factor (AND? factor)*
@@ -442,6 +459,7 @@ parseExpr()
 ```
 
 **AST:**
+
 ```
 AndNode
 ├── PhraseNode{Terms:["climate","change"]}
@@ -612,6 +630,7 @@ score("climat") = 0.470 × 1.415 = 0.665
 ```
 
 **Scoring doc0 for term "chang":**
+
 ```
 df = 2, tf = 2, dl = 9   (same as "climat" — both appear twice)
 idf = 0.470
@@ -620,6 +639,7 @@ score("chang") = 0.665
 ```
 
 **Scoring doc0 for term "ocean":**
+
 ```
 df = 3 (appears in ALL docs)
 tf = 1 (appears once in doc0)
@@ -639,11 +659,13 @@ score("ocean") = 0.134 × 1.043 = 0.140
 **Why "ocean" scores low:** IDF measures rarity. "ocean" appears in all 3 documents → `df=N=3` → IDF near zero. It's not a discriminating term — finding it in doc0 tells you nothing about whether doc0 is relevant. This is correct: the query is about "climate change", not "ocean" generically.
 
 **Total BM25 for doc0:**
+
 ```
 0.665 + 0.665 + 0.140 = 1.470
 ```
 
 **k1=1.2 effect on "climat" (tf=2 vs hypothetical tf=10):**
+
 ```
 tf=2:  norm = 2×2.2 / (2 + 1.11)  = 4.4 / 3.11  = 1.415
 tf=10: norm = 10×2.2 / (10 + 1.11) = 22 / 11.11 = 1.980  ← barely 40% more for 5× the occurrences
@@ -653,6 +675,7 @@ tf=50: norm = 50×2.2 / (50 + 1.11) = 110 / 51.11 = 2.152 ← almost no increase
 TF saturates → keyword stuffing doesn't work.
 
 **b=0.75 effect — if doc0 were 100 tokens instead of 9:**
+
 ```
 norm(dl=100) = 2×2.2 / (2 + 1.2×(0.25 + 0.75×100/10))
              = 4.4 / (2 + 1.2×7.75)
@@ -683,6 +706,7 @@ doc2 (Ocean Pollution) → links to: doc0 (Climate Change), doc1 (Ocean), [Indus
 Red links = titles not in our 3-doc corpus → ignored.
 
 **In-link lists (precomputed before iteration):**
+
 ```
 inLinks[doc0] = [doc1, doc2]    ← both doc1 and doc2 link to doc0
 inLinks[doc1] = [doc0, doc2]    ← doc0 and doc2 link to doc1
@@ -711,6 +735,7 @@ PR(doc2) = 0.05 + 0.85 × 0
 ```
 
 **After 30 iterations (converged):**
+
 ```
 doc0 (Climate Change):  ~0.45  ← gets links from doc1 and doc2
 doc1 (Ocean):           ~0.45  ← gets links from doc0 and doc2
@@ -742,6 +767,7 @@ doc0: BM25=1.470, PR=0.45
 **Why `log(1+x)` not raw PageRank:**
 
 PageRank values span orders of magnitude. In the full corpus:
+
 - A major article: PR ≈ 0.001
 - A top-linked article: PR ≈ 0.0001 (sounds small but it's 10× average)
 - A stub article: PR ≈ 0.000001
@@ -749,6 +775,7 @@ PageRank values span orders of magnitude. In the full corpus:
 Raw values are tiny decimals. Without log, the PageRank term barely registers. With log: `log(1.001) = 0.001` vs `log(1.0001) = 0.0001` — the ratio is preserved but at a scale that competes meaningfully with BM25 scores.
 
 If doc2 had not been eliminated by NOT, its score would be:
+
 ```
 doc2: BM25≈1.3 (phrase matches + ocean matches), PR=0.05
   final = 1.3 + log(1.05) = 1.3 + 0.049 = 1.349
@@ -844,11 +871,11 @@ found 1 documents in 0.6ms
 
 **What was eliminated and when:**
 
-| Document | Eliminated at | Reason |
-|----------|--------------|--------|
-| doc1 (Ocean) | Step 7.1 — PhraseIntersect | No "climat" in posting lists — never contained the phrase |
-| doc2 (Ocean Pollution) | Step 7.4B — Difference | Posting list for "pollut" includes doc2 — NOT clause removes it |
-| doc0 (Climate Change) | — | Matches all conditions — survives |
+| Document               | Eliminated at              | Reason                                                          |
+| ---------------------- | -------------------------- | --------------------------------------------------------------- |
+| doc1 (Ocean)           | Step 7.1 — PhraseIntersect | No "climat" in posting lists — never contained the phrase       |
+| doc2 (Ocean Pollution) | Step 7.4B — Difference     | Posting list for "pollut" includes doc2 — NOT clause removes it |
+| doc0 (Climate Change)  | —                          | Matches all conditions — survives                               |
 
 ---
 
