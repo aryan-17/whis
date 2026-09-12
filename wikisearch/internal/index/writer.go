@@ -87,10 +87,11 @@ func WriteSegment(mem *MemoryIndex, dir string) error {
 	type docRecord struct {
 		Title  string `json:"t"`
 		Length uint32 `json:"l"`
+		Text   string `json:"x"`
 	}
 	enc := json.NewEncoder(docf)
 	for _, doc := range mem.docs {
-		if err := enc.Encode(docRecord{Title: doc.Title, Length: doc.Length}); err != nil {
+		if err := enc.Encode(docRecord{Title: doc.Title, Length: doc.Length, Text: doc.Text}); err != nil {
 			return err
 		}
 	}

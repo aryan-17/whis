@@ -61,15 +61,17 @@ func OpenSegment(dir string) (Index, error) {
 	type docRecord struct {
 		Title  string `json:"t"`
 		Length uint32 `json:"l"`
+		Text   string `json:"x"`
 	}
 	sc := bufio.NewScanner(docf)
+	sc.Buffer(make([]byte, 1024*1024), 10*1024*1024) // articles can be large
 	var id uint32
 	for sc.Scan() {
 		var rec docRecord
 		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
 			return nil, fmt.Errorf("docs line %d: %w", id, err)
 		}
-		s.docs = append(s.docs, corpus.Document{ID: id, Title: rec.Title, Length: rec.Length})
+		s.docs = append(s.docs, corpus.Document{ID: id, Title: rec.Title, Length: rec.Length, Text: rec.Text})
 		s.docLens = append(s.docLens, rec.Length)
 		s.totalLen += uint64(rec.Length)
 		id++
