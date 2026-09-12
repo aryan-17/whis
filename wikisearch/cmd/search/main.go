@@ -118,10 +118,12 @@ func main() {
 				if err != nil {
 					fmt.Printf("error: %v\n", err)
 				} else {
-					link := wikiURL(doc.Title)
-					fmt.Printf("\n── %s ──\n\n%s\n\n",
-						hyperlink(link, doc.Title+" ↗"), doc.Text)
-					openBrowser(link)
+					localPath := writeDocFile(n, doc)
+					fmt.Printf("\n── %s ──\n%s\n\n%s\n\n",
+						doc.Title,
+						hyperlink("file://"+localPath, localPath),
+						doc.Text)
+					openBrowser("file://" + localPath)
 				}
 			}
 			fmt.Print("> ")
@@ -177,9 +179,10 @@ func main() {
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
 			snip := rank.Snippet(doc.Text, queryTerms, 160)
-			link := wikiURL(doc.Title)
-			fmt.Printf("%d. %s (%.4f)\n   %s\n",
-				i+1, hyperlink(link, doc.Title), res.Score, snip)
+			localPath := writeDocFile(i+1, doc)
+			fmt.Printf("%d. %s (%.4f)\n   %s\n   %s\n",
+				i+1, doc.Title, res.Score, snip,
+				hyperlink("file://"+localPath, localPath))
 		}
 		fmt.Print("> ")
 	}
@@ -304,6 +307,15 @@ func wikiURL(title string) string {
 // Clicking the text in a supporting terminal (iTerm2, Kitty, WezTerm) opens the URL.
 func hyperlink(u, text string) string {
 	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", u, text)
+}
+
+// writeDocFile writes a result document to /tmp/wikisearch_<n>.txt and returns the path.
+func writeDocFile(n int, doc corpus.Document) string {
+	path := fmt.Sprintf("/tmp/wikisearch_%d.txt", n)
+	content := fmt.Sprintf("# %s\n%s\n\n%s\n",
+		doc.Title, wikiURL(doc.Title), doc.Text)
+	os.WriteFile(path, []byte(content), 0o644)
+	return path
 }
 
 // openBrowser opens a URL in the default browser.
