@@ -119,7 +119,8 @@ func main() {
 					fmt.Printf("error: %v\n", err)
 				} else {
 					link := wikiURL(doc.Title)
-					fmt.Printf("\n── %s ──\n%s\n\n%s\n\n", doc.Title, link, doc.Text)
+					fmt.Printf("\n── %s ──\n\n%s\n\n",
+						hyperlink(link, doc.Title+" ↗"), doc.Text)
 					openBrowser(link)
 				}
 			}
@@ -176,8 +177,9 @@ func main() {
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
 			snip := rank.Snippet(doc.Text, queryTerms, 160)
-			fmt.Printf("%d. %s (%.4f)\n   %s\n   \033[2m%s\033[0m\n",
-				i+1, doc.Title, res.Score, snip, wikiURL(doc.Title))
+			link := wikiURL(doc.Title)
+			fmt.Printf("%d. %s (%.4f)\n   %s\n",
+				i+1, hyperlink(link, doc.Title), res.Score, snip)
 		}
 		fmt.Print("> ")
 	}
@@ -296,6 +298,12 @@ func collectTerms(node query.Node, a *analysis.Analyzer) []string {
 func wikiURL(title string) string {
 	slug := strings.ReplaceAll(title, " ", "_")
 	return "https://simple.wikipedia.org/wiki/" + url.PathEscape(slug)
+}
+
+// hyperlink wraps text in an OSC 8 terminal hyperlink.
+// Clicking the text in a supporting terminal (iTerm2, Kitty, WezTerm) opens the URL.
+func hyperlink(u, text string) string {
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", u, text)
 }
 
 // openBrowser opens a URL in the default browser.
