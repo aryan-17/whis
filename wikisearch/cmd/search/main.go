@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -102,7 +105,7 @@ func main() {
 			continue
 		}
 
-		// open <n> — print full document text for result n
+		// open <n> — print full document text and open in browser
 		if strings.HasPrefix(input, "open ") {
 			arg := strings.TrimPrefix(input, "open ")
 			n := 0
@@ -115,8 +118,9 @@ func main() {
 				if err != nil {
 					fmt.Printf("error: %v\n", err)
 				} else {
-					fmt.Printf("\n── %s (docID=%d, score=%.4f) ──\n\n%s\n\n",
-						doc.Title, doc.ID, res.Score, doc.Text)
+					link := wikiURL(doc.Title)
+					fmt.Printf("\n── %s ──\n%s\n\n%s\n\n", doc.Title, link, doc.Text)
+					openBrowser(link)
 				}
 			}
 			fmt.Print("> ")
@@ -172,7 +176,8 @@ func main() {
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
 			snip := rank.Snippet(doc.Text, queryTerms, 160)
-			fmt.Printf("%d. %s (%.4f)\n   %s\n", i+1, doc.Title, res.Score, snip)
+			fmt.Printf("%d. %s (%.4f)\n   %s\n   \033[2m%s\033[0m\n",
+				i+1, doc.Title, res.Score, snip, wikiURL(doc.Title))
 		}
 		fmt.Print("> ")
 	}
@@ -285,4 +290,24 @@ func collectTerms(node query.Node, a *analysis.Analyzer) []string {
 		terms = append(terms, collectTerms(n.Child, a)...)
 	}
 	return terms
+}
+
+// wikiURL constructs the Simple English Wikipedia URL for a given article title.
+func wikiURL(title string) string {
+	slug := strings.ReplaceAll(title, " ", "_")
+	return "https://simple.wikipedia.org/wiki/" + url.PathEscape(slug)
+}
+
+// openBrowser opens a URL in the default browser.
+func openBrowser(u string) {
+	var cmd string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+	case "linux":
+		cmd = "xdg-open"
+	default:
+		return // unsupported
+	}
+	exec.Command(cmd, u).Start()
 }
