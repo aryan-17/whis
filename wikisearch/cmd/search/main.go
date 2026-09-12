@@ -90,11 +90,35 @@ func main() {
 
 	sc := bufio.NewScanner(os.Stdin)
 	fmt.Println(`Query syntax: terms  "phrase"  AND OR NOT  field:term  (grouped)`)
+	fmt.Println(`Commands:     open <n>  — show full text of result n`)
 	fmt.Print("> ")
+
+	var lastTop []rank.Result // remember last results for open command
 
 	for sc.Scan() {
 		input := strings.TrimSpace(sc.Text())
 		if input == "" {
+			fmt.Print("> ")
+			continue
+		}
+
+		// open <n> — print full document text for result n
+		if strings.HasPrefix(input, "open ") {
+			arg := strings.TrimPrefix(input, "open ")
+			n := 0
+			fmt.Sscanf(arg, "%d", &n)
+			if n < 1 || n > len(lastTop) {
+				fmt.Printf("no result %d (last search returned %d results)\n", n, len(lastTop))
+			} else {
+				res := lastTop[n-1]
+				doc, err := idx.Doc(res.DocID)
+				if err != nil {
+					fmt.Printf("error: %v\n", err)
+				} else {
+					fmt.Printf("\n── %s (docID=%d, score=%.4f) ──\n\n%s\n\n",
+						doc.Title, doc.ID, res.Score, doc.Text)
+				}
+			}
 			fmt.Print("> ")
 			continue
 		}
@@ -143,6 +167,7 @@ func main() {
 		}
 
 		top := rank.TopK(results, 10)
+		lastTop = top // save for open command
 		fmt.Printf("found %d documents in %s\n", len(result.Entries), time.Since(start))
 		for i, res := range top {
 			doc, _ := idx.Doc(res.DocID)
