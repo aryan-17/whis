@@ -1,6 +1,6 @@
 # Wikisearch
 
-A full-text search engine over Simple English Wikipedia, built from scratch in Go. Every layer is hand-rolled — no search libraries, no external indexes. The goal is to understand exactly how search engines work internally.
+A full text search engine over Simple English Wikipedia, built from scratch in Go. Every layer is hand-rolled — no search libraries, no external indexes. The goal is to understand exactly how search engines work internally.
 
 ---
 
